@@ -1,0 +1,66 @@
+{
+  "excel_file": "sample_survey.xlsx",
+  "timestamp": "2026-01-14T17:28:20.468770",
+  "selected_approaches": [
+    3
+  ],
+  "approaches": {
+    "markitdown": {
+      "extracted_text_length": 938,
+      "extracted_text_preview": "## Survey\n| Company Survey 2024 | Unnamed: 1 | Unnamed: 2 | Unnamed: 3 | Unnamed: 4 |\n| --- | --- | --- | --- | --- |\n| - | - | - | - | - |\n| 1. What is your company's primary business sector? | - | - | - | - |\n| 2. How many employees does your organization have? | - | - | - | - |\n| 3. Rate your satisfaction with our service (1-5 scale) | - | - | - | - |\n| - | - | - | - | - |\n| 4. Which of the following best describes your role? | a) Manager | - | - | - |\n| - | b) Developer | - | - | - |\n| - | c...",
+      "markitdown_file": "sample_survey_markitdown_20260114_172820.md",
+      "bedrock_result": {
+        "extraction_method": "text_based",
+        "total_questions_found": 9,
+        "questions": [
+          {
+            "question_text": "What is your company's primary business sector?",
+            "question_type": "open_ended"
+          },
+          {
+            "question_text": "How many employees does your organization have?",
+            "question_type": "open_ended"
+          },
+          {
+            "question_text": "Rate your satisfaction with our service (1-5 scale)",
+            "question_type": "open_ended"
+          },
+          {
+            "question_text": "Which of the following best describes your role? (Manager|Developer|Analyst|Other)",
+            "question_type": "single_choice"
+          },
+          {
+            "question_text": "Please rate the following aspects:Service quality",
+            "question_type": "grouped_question"
+          },
+          {
+            "question_text": "Please rate the following aspects:Response time",
+            "question_type": "grouped_question"
+          },
+          {
+            "question_text": "Please rate the following aspects:Staff friendliness",
+            "question_type": "grouped_question"
+          },
+          {
+            "question_text": "Would you recommend our services to others? (Yes|No)",
+            "question_type": "yes_no"
+          },
+          {
+            "question_text": "What improvements would you suggest?",
+            "question_type": "open_ended"
+          }
+        ],
+        "success": true,
+        "raw_response": "<questions>\n  <q type=\"open_ended\">What is your company's primary business sector?</q>\n  <q type=\"open_ended\">How many employees does your organization have?</q>\n  <q type=\"open_ended\">Rate your satisfaction with our service (1-5 scale)</q>\n  <q type=\"single_choice\">Which of the following best describes your role? (Manager|Developer|Analyst|Other)</q>\n  <q type=\"grouped_question\">Please rate the following aspects:Service quality</q>\n  <q type=\"grouped_question\">Please rate the following aspects:Response time</q>\n  <q type=\"grouped_question\">Please rate the following aspects:Staff friendliness</q>\n  <q type=\"yes_no\">Would you recommend our services to others? (Yes|No)</q>\n  <q type=\"open_ended\">What improvements would you suggest?</q>\n</questions>"
+      },
+      "performance": {
+        "markitdown_extraction_time": 0.12048459053039551,
+        "bedrock_time": 5.142985105514526,
+        "total_time": 5.263830184936523,
+        "markitdown_extraction_formatted": "120ms",
+        "bedrock_formatted": "5.1s",
+        "total_formatted": "5.3s"
+      }
+    }
+  }
+}

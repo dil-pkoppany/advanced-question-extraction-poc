@@ -1,0 +1,15 @@
+# Excel Question Extraction POC Requirements
+
+# Microsoft MarkItDown for document conversion (includes Excel support)
+markitdown[xlsx]>=0.1.3
+
+# XML/HTML parsing for response processing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# AWS SDK
+boto3>=1.34.0
+botocore>=1.34.0
+
+# Standard libraries (already included in Python)
+# json, asyncio, argparse, logging, datetime, pathlib, os, sys, tempfile, re
