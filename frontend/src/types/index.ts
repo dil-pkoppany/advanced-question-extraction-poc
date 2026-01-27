@@ -1,0 +1,118 @@
+/** Question types supported by the extraction system */
+export type QuestionType =
+  | 'open_ended'
+  | 'single_choice'
+  | 'multiple_choice'
+  | 'grouped_question'
+  | 'yes_no';
+
+/** Column mapping configuration */
+export interface ColumnMapping {
+  sheet_name: string;
+  question_column: string;
+  answer_column?: string;
+  type_column?: string;
+  question_types: QuestionType[];
+  start_row: number;
+  end_row?: number;
+}
+
+/** Metadata for a single Excel sheet */
+export interface SheetMetadata {
+  name: string;
+  columns: string[];
+  row_count: number;
+  sample_data: Record<string, string | null>[];
+}
+
+/** Metadata for an uploaded file */
+export interface FileMetadata {
+  file_id: string;
+  file_name: string;
+  file_size: number;
+  sheets: SheetMetadata[];
+  upload_timestamp: string;
+}
+
+/** Upload response from the API */
+export interface UploadResponse {
+  file_id: string;
+  file_name: string;
+  metadata: FileMetadata;
+}
+
+/** Available LLM models */
+export type ModelType = 'opus-4.5' | 'sonnet-4';
+
+/** Extraction configuration */
+export interface ExtractionConfig {
+  approach: 1 | 2 | 3;
+  column_mappings?: ColumnMapping[];
+  question_types?: QuestionType[];
+  run_all_approaches: boolean;
+  model: ModelType;
+  compare_models: boolean;
+}
+
+/** A single extracted question */
+export interface ExtractedQuestion {
+  question_text: string;
+  question_type: QuestionType;
+  answers?: string[];
+  confidence?: number;
+  is_valid_question?: boolean;
+  row_index?: number;
+  sheet_name?: string;
+}
+
+/** Metrics for an extraction run */
+export interface ExtractionMetrics {
+  extraction_count: number;
+  expected_count?: number;
+  accuracy?: number;
+  llm_time_ms?: number;
+  total_time_ms: number;
+  tokens_input?: number;
+  tokens_output?: number;
+  avg_confidence?: number;
+  low_confidence_count?: number;
+}
+
+/** Result of a single extraction approach */
+export interface ExtractionResult {
+  approach: number;
+  model?: string;
+  success: boolean;
+  error?: string;
+  questions: ExtractedQuestion[];
+  metrics?: ExtractionMetrics;
+  raw_response?: string;
+}
+
+/** Comparison of multiple approaches */
+export interface ComparisonResult {
+  comparison_id: string;
+  run_id: string;
+  timestamp: string;
+  results: Record<string, ExtractionResult>;
+  winner: Record<string, number>;
+}
+
+/** Response from extraction endpoint */
+export interface ExtractionResponse {
+  run_id: string;
+  results: Record<string, ExtractionResult>;
+  comparison?: ComparisonResult;
+}
+
+/** Wizard step names */
+export type WizardStep = 'upload' | 'approach' | 'config' | 'running' | 'results';
+
+/** Wizard state */
+export interface WizardState {
+  step: WizardStep;
+  fileMetadata?: FileMetadata;
+  config: ExtractionConfig;
+  results?: ExtractionResponse;
+  error?: string;
+}

@@ -139,3 +139,5 @@ alembic/versions/*
 *.sqlite3 
 
 .requirements_hash
+output/
+uploads/

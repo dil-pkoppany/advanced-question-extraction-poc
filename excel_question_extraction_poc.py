@@ -216,7 +216,7 @@ class BedrockQuestionExtractor:
     
     def __init__(self, region: str = "us-west-2", model_id: str = None):
         if model_id is None:
-            model_id = os.getenv('BEDROCK_MODEL_ID', 'arn:aws:bedrock:us-west-2:492490406854:inference-profile/global.anthropic.claude-sonnet-4-20250514-v1:0')
+            model_id = os.getenv('BEDROCK_MODEL_ID', 'arn:aws:bedrock:us-west-2:492490406854:inference-profile/global.anthropic.claude-opus-4-5-20250514-v1:0')
         self.region = region
         self.model_id = model_id
         self.logger = logging.getLogger(__name__)
@@ -269,9 +269,8 @@ class BedrockQuestionExtractor:
         # Claude API payload
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 8192,  # Sonnet 4 supports more tokens
+            "max_tokens": 16384,  # Opus 4.5 supports up to 32K output tokens
             "temperature": 0.1,
-            "top_p": 0.9,
             "messages": [
                 {
                     "role": "user",

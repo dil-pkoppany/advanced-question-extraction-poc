@@ -28,15 +28,15 @@ This POC extracts questions from Excel files using AWS Bedrock with Claude Sonne
 ## 🛠️ Installation
 
 ```bash
-# Create virtual environment (recommended)
-python3 -m venv poc_venv
-source poc_venv/bin/activate  # On Windows: poc_venv\Scripts\activate
+cd backend
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+export AWS_PROFILE=your-profile
+uvicorn app.main:app --reload --port 8000
 
-# Install dependencies
-pip install -r poc_requirements.txt
-
-# Or install manually:
-pip install markitdown[xlsx] beautifulsoup4 lxml boto3
+cd frontend
+npm install
+npm run dev
 ```
 
 ### Dependencies
