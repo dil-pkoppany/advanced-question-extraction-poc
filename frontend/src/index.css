@@ -481,6 +481,16 @@ body {
   background: rgba(102, 126, 234, 0.1);
 }
 
+.run-list-item-filename {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .run-list-item-header {
   display: flex;
   justify-content: space-between;
@@ -518,6 +528,22 @@ body {
   padding: 1.5rem 2rem;
   overflow-y: auto;
   max-height: calc(100vh - 280px);
+}
+
+.run-detail-header {
+  margin-bottom: 1rem;
+}
+
+.run-detail-header h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem 0;
+}
+
+.run-detail-id {
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--text-secondary);
 }
 
 .run-detail h2 {
@@ -739,4 +765,321 @@ body {
   font-weight: 600;
   margin-bottom: 0.75rem;
   color: var(--primary);
+}
+
+/* ================================================
+   Ground Truth Page Styles
+   ================================================ */
+.ground-truth-page {
+  background: var(--bg-card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  min-height: calc(100vh - 200px);
+}
+
+.ground-truth-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.ground-truth-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+
+.ground-truth-content {
+  padding: 2rem;
+}
+
+.ground-truth-description {
+  color: var(--text-secondary);
+  margin-bottom: 1.5rem;
+}
+
+/* Ground Truth List */
+.ground-truth-list {
+  overflow-x: auto;
+}
+
+.ground-truth-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.ground-truth-table th,
+.ground-truth-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.ground-truth-table th {
+  background: var(--bg-light);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.ground-truth-table tr:hover {
+  background: var(--bg-light);
+}
+
+.file-name-cell {
+  font-weight: 500;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count-cell {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.actions-cell {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-danger {
+  background: var(--error);
+  color: white;
+  border: none;
+}
+
+.btn-danger:hover {
+  background: #e53e3e;
+}
+
+.btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Ground Truth Editor */
+.ground-truth-editor {
+  background: var(--bg-card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 2rem;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.editor-section {
+  margin-bottom: 2rem;
+  padding: 1.5rem;
+  background: var(--bg-light);
+  border-radius: 8px;
+}
+
+.editor-section h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.section-description {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+}
+
+.manual-entry-divider {
+  display: flex;
+  align-items: center;
+  margin: 1.5rem 0;
+  color: var(--text-secondary);
+}
+
+.manual-entry-divider::before,
+.manual-entry-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+
+.manual-entry-divider span {
+  padding: 0 1rem;
+  font-size: 0.875rem;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+/* Sheet Tabs */
+.sheet-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sheet-tab:hover {
+  border-color: var(--primary);
+}
+
+.sheet-tab.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.sheet-count {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.add-sheet-btn {
+  border-style: dashed;
+}
+
+/* Sheet Editor */
+.sheet-editor {
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.sheet-header {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.questions-section {
+  min-height: 200px;
+}
+
+.questions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.questions-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.questions-list-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Question Form */
+.question-form {
+  padding: 1rem;
+  background: var(--bg-light);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.question-form-header {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.question-form-header .remove-btn {
+  margin-left: auto;
+}
+
+.editor-summary {
+  padding: 1rem;
+  background: var(--bg-light);
+  border-radius: 8px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.editor-summary strong {
+  color: var(--primary);
+}
+
+/* ================================================
+   Ground Truth Comparison Styles
+   ================================================ */
+.ground-truth-comparison-section,
+.ground-truth-tab {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, rgba(72, 187, 120, 0.05) 0%, rgba(102, 126, 234, 0.05) 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.ground-truth-comparison-section h3,
+.ground-truth-tab h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem 0;
+  display: flex;
+  align-items: center;
+}
+
+.gt-comparison-subtitle {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  margin-bottom: 1.5rem;
+}
+
+.gt-comparison-subtitle strong {
+  color: var(--primary);
+}
+
+.gt-comparison-grid {
+  font-size: 0.875rem;
 }

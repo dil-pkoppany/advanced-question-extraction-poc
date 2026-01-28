@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routes import upload_router, extraction_router, comparison_router
+from .routes import upload_router, extraction_router, comparison_router, ground_truth_router
 
 
 @asynccontextmanager
@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(upload_router, prefix="/api")
     app.include_router(extraction_router, prefix="/api")
     app.include_router(comparison_router, prefix="/api")
+    app.include_router(ground_truth_router, prefix="/api")
 
     @app.get("/health")
     async def health_check():

@@ -1,5 +1,6 @@
 """File upload endpoint for Excel files."""
 
+import json
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,19 @@ from ..schemas import FileMetadata, SheetMetadata, UploadResponse
 from ..services.excel_parser import ExcelParser
 
 router = APIRouter(prefix="/upload", tags=["upload"])
+
+
+def _get_original_filename(file_id: str) -> str | None:
+    """Get the original filename for a file ID from the metadata file."""
+    settings = get_settings()
+    meta_file = settings.upload_dir / f"{file_id}.meta.json"
+    if meta_file.exists():
+        try:
+            data = json.loads(meta_file.read_text())
+            return data.get("original_filename")
+        except Exception:
+            pass
+    return None
 
 
 @router.post("/", response_model=UploadResponse)
@@ -43,9 +57,15 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
 
     # Save file
     file_path = settings.upload_dir / f"{file_id}{file_ext}"
+    meta_path = settings.upload_dir / f"{file_id}.meta.json"
     try:
         content = await file.read()
         file_path.write_bytes(content)
+        # Save original filename in metadata file
+        meta_path.write_text(json.dumps({
+            "original_filename": file.filename,
+            "upload_timestamp": datetime.now().isoformat(),
+        }))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
 
@@ -79,8 +99,11 @@ async def get_file_metadata(file_id: str) -> FileMetadata:
     """Get metadata for a previously uploaded file."""
     settings = get_settings()
 
-    # Find the file
-    matching_files = list(settings.upload_dir.glob(f"{file_id}.*"))
+    # Find the file (exclude .meta.json files)
+    matching_files = [
+        f for f in settings.upload_dir.glob(f"{file_id}.*")
+        if f.suffix.lower() in {'.xlsx', '.xls', '.xlsm', '.xltx', '.xltm'}
+    ]
     if not matching_files:
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -93,9 +116,12 @@ async def get_file_metadata(file_id: str) -> FileMetadata:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse Excel file: {e}")
 
+    # Get original filename from metadata file
+    original_filename = _get_original_filename(file_id) or file_path.name
+
     return FileMetadata(
         file_id=file_id,
-        file_name=file_path.name,
+        file_name=original_filename,
         file_size=file_path.stat().st_size,
         sheets=sheets_metadata,
     )

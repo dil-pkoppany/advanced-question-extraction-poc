@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { listRuns, getRunDetails } from '../../api/client';
-import type { RunMetadata, ExtractionResponse, ExtractionResult } from '../../types';
+import { listRuns, getRunDetails, compareWithGroundTruth } from '../../api/client';
+import type { RunMetadata, ExtractionResponse, ExtractionResult, GroundTruthComparisonResult } from '../../types';
 
 interface HistoryPageProps {
   onBackToWizard: () => void;
@@ -120,6 +120,9 @@ function RunListItem({
       className={`run-list-item ${isSelected ? 'selected' : ''}`}
       onClick={onClick}
     >
+      <div className="run-list-item-filename" title={run.file_name}>
+        {run.file_name}
+      </div>
       <div className="run-list-item-header">
         <span className="run-id">{run.run_id.slice(-12)}</span>
         <span className="run-date">{formattedDate}</span>
@@ -148,12 +151,29 @@ function RunDetail({
   data: ExtractionResponse;
   metadata?: RunMetadata;
 }) {
-  const [activeTab, setActiveTab] = useState<'results' | 'prompts' | 'config'>('results');
+  const [activeTab, setActiveTab] = useState<'results' | 'prompts' | 'config' | 'groundtruth'>('results');
   const approachKeys = Object.keys(data.results).sort();
+
+  // Get filename from metadata (remove file_id prefix if present)
+  const fileName = metadata?.file_name || '';
+
+  // Ground truth comparison query
+  const groundTruthQuery = useQuery({
+    queryKey: ['groundTruthComparison', fileName, runId],
+    queryFn: () => compareWithGroundTruth(fileName, data.results),
+    enabled: !!fileName && Object.keys(data.results).length > 0,
+  });
+
+  const hasGroundTruth = groundTruthQuery.data && Object.keys(groundTruthQuery.data).length > 0;
 
   return (
     <div className="run-detail">
-      <h2>Run: {runId.slice(-12)}</h2>
+      <div className="run-detail-header">
+        <h2>{fileName || `Run: ${runId.slice(-12)}`}</h2>
+        {fileName && (
+          <span className="run-detail-id">Run ID: {runId.slice(-12)}</span>
+        )}
+      </div>
       
       {/* Tabs */}
       <div className="tabs">
@@ -175,6 +195,15 @@ function RunDetail({
         >
           Configuration
         </button>
+        {hasGroundTruth && (
+          <button
+            className={`tab ${activeTab === 'groundtruth' ? 'active' : ''}`}
+            onClick={() => setActiveTab('groundtruth')}
+            style={{ color: 'var(--success)' }}
+          >
+            🎯 Ground Truth
+          </button>
+        )}
       </div>
 
       {/* Tab Content */}
@@ -187,6 +216,13 @@ function RunDetail({
         )}
         {activeTab === 'config' && metadata && (
           <ConfigTab metadata={metadata} />
+        )}
+        {activeTab === 'groundtruth' && hasGroundTruth && (
+          <GroundTruthTab 
+            comparisons={groundTruthQuery.data!} 
+            approachKeys={approachKeys}
+            results={data.results}
+          />
         )}
       </div>
     </div>
@@ -428,6 +464,202 @@ function ConfigTab({ metadata }: { metadata: RunMetadata }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Ground Truth comparison tab */
+function GroundTruthTab({
+  comparisons,
+  approachKeys,
+  results,
+}: {
+  comparisons: Record<string, GroundTruthComparisonResult>;
+  approachKeys: string[];
+  results: Record<string, ExtractionResult>;
+}) {
+  const firstComparison = Object.values(comparisons)[0];
+  if (!firstComparison) return null;
+
+  return (
+    <div className="ground-truth-tab">
+      <h3>Ground Truth Comparison</h3>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+        Comparing against: <strong>{firstComparison.ground_truth_file_name}</strong>
+      </p>
+
+      {/* Metrics Grid */}
+      <div className="gt-comparison-grid" style={{
+        display: 'grid',
+        gridTemplateColumns: `150px repeat(${approachKeys.length}, 1fr)`,
+        gap: '1px',
+        background: 'var(--border)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        marginBottom: '1.5rem',
+      }}>
+        {/* Header */}
+        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '600' }}>
+          Metric
+        </div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ 
+            background: 'var(--bg-light)', 
+            padding: '0.75rem', 
+            fontWeight: '500', 
+            textAlign: 'center',
+            fontSize: '0.85rem'
+          }}>
+            {formatApproachKey(key, results[key])}
+          </div>
+        ))}
+
+        {/* Ground Truth Count */}
+        <div style={{ background: 'white', padding: '0.75rem' }}>Ground Truth</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
+            {comparisons[key]?.ground_truth_count ?? '-'}
+          </div>
+        ))}
+
+        {/* Extracted Count */}
+        <div style={{ background: 'white', padding: '0.75rem' }}>Extracted</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
+            {comparisons[key]?.extracted_count ?? '-'}
+          </div>
+        ))}
+
+        {/* Exact Matches */}
+        <div style={{ background: 'white', padding: '0.75rem' }}>Exact Matches</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ 
+            background: 'white', 
+            padding: '0.75rem', 
+            textAlign: 'center',
+            color: comparisons[key]?.exact_matches ? 'var(--success)' : 'inherit',
+            fontWeight: comparisons[key]?.exact_matches ? '600' : 'normal'
+          }}>
+            {comparisons[key]?.exact_matches ?? '-'}
+          </div>
+        ))}
+
+        {/* Fuzzy Matches */}
+        <div style={{ background: 'white', padding: '0.75rem' }}>Fuzzy Matches</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
+            {comparisons[key]?.fuzzy_matches ?? '-'}
+          </div>
+        ))}
+
+        {/* Missed */}
+        <div style={{ background: 'white', padding: '0.75rem' }}>Missed</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ 
+            background: 'white', 
+            padding: '0.75rem', 
+            textAlign: 'center',
+            color: comparisons[key]?.missed_questions ? 'var(--error)' : 'inherit'
+          }}>
+            {comparisons[key]?.missed_questions ?? '-'}
+          </div>
+        ))}
+
+        {/* Extra */}
+        <div style={{ background: 'white', padding: '0.75rem' }}>Extra</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
+            {comparisons[key]?.extra_questions ?? '-'}
+          </div>
+        ))}
+
+        {/* Precision */}
+        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '500' }}>Precision</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ 
+            background: 'var(--bg-light)', 
+            padding: '0.75rem', 
+            textAlign: 'center',
+            fontWeight: '600'
+          }}>
+            {comparisons[key] ? `${(comparisons[key].precision * 100).toFixed(1)}%` : '-'}
+          </div>
+        ))}
+
+        {/* Recall */}
+        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '500' }}>Recall</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ 
+            background: 'var(--bg-light)', 
+            padding: '0.75rem', 
+            textAlign: 'center',
+            fontWeight: '600'
+          }}>
+            {comparisons[key] ? `${(comparisons[key].recall * 100).toFixed(1)}%` : '-'}
+          </div>
+        ))}
+
+        {/* F1 Score */}
+        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '500' }}>F1 Score</div>
+        {approachKeys.map((key) => (
+          <div key={key} style={{ 
+            background: 'var(--bg-light)', 
+            padding: '0.75rem', 
+            textAlign: 'center',
+            fontWeight: '600',
+            color: comparisons[key]?.f1_score >= 0.8 ? 'var(--success)' : 
+                   comparisons[key]?.f1_score >= 0.5 ? 'var(--warning)' : 'var(--error)'
+          }}>
+            {comparisons[key] ? `${(comparisons[key].f1_score * 100).toFixed(1)}%` : '-'}
+          </div>
+        ))}
+      </div>
+
+      {/* Legend */}
+      <div style={{ 
+        fontSize: '0.75rem', 
+        color: 'var(--text-secondary)',
+        display: 'flex',
+        gap: '1.5rem',
+        flexWrap: 'wrap',
+        marginBottom: '1.5rem'
+      }}>
+        <span><strong>Precision</strong> = matches / extracted</span>
+        <span><strong>Recall</strong> = matches / ground truth</span>
+        <span><strong>F1</strong> = harmonic mean of precision &amp; recall</span>
+      </div>
+
+      {/* Missed Questions */}
+      {Object.entries(comparisons).map(([key, comp]) => (
+        comp.missed_question_ids.length > 0 && (
+          <div key={key} style={{ marginBottom: '1rem' }}>
+            <h4 style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+              Missed by {formatApproachKey(key, results[key])}:
+            </h4>
+            <div style={{ 
+              display: 'flex', 
+              flexWrap: 'wrap', 
+              gap: '0.5rem',
+              fontSize: '0.75rem'
+            }}>
+              {comp.missed_question_ids.map((id) => (
+                <span 
+                  key={id}
+                  style={{ 
+                    padding: '0.25rem 0.5rem', 
+                    background: 'rgba(245, 101, 101, 0.1)',
+                    color: 'var(--error)',
+                    borderRadius: '4px'
+                  }}
+                >
+                  {id}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      ))}
     </div>
   );
 }

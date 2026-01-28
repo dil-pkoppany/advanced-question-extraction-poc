@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class QuestionType(str, Enum):
@@ -198,3 +198,153 @@ class ExtractionResponse(BaseModel):
     run_id: str
     results: dict[str, ExtractionResult]
     comparison: ComparisonResult | None = None
+
+
+# Ground Truth models
+
+
+class GroundTruthQuestion(BaseModel):
+    """A single validated question in ground truth."""
+
+    id: str = Field(..., description="User-assigned ID (e.g., Q001, Q002)")
+    question_text: str = Field(..., description="The validated question text")
+    question_type: QuestionType = Field(..., description="Question type")
+    answers: list[str] | None = Field(
+        None, description="Answer options if applicable"
+    )
+    row_index: int | None = Field(
+        None, description="Optional reference to Excel row"
+    )
+
+    @field_validator("id", "question_text", mode="before")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        """Strip leading/trailing whitespace from text fields."""
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("answers", mode="before")
+    @classmethod
+    def strip_answers(cls, v: list[str] | None) -> list[str] | None:
+        """Strip whitespace from answer options."""
+        if v is not None:
+            return [a.strip() for a in v if a.strip()]
+        return v
+
+
+class GroundTruthSheet(BaseModel):
+    """A sheet containing validated questions."""
+
+    sheet_name: str = Field(..., description="Name of the sheet")
+    questions: list[GroundTruthQuestion] = Field(
+        default_factory=list, description="Validated questions in this sheet"
+    )
+
+    @field_validator("sheet_name", mode="before")
+    @classmethod
+    def strip_sheet_name(cls, v: str) -> str:
+        """Strip whitespace from sheet name."""
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+
+class GroundTruth(BaseModel):
+    """Complete ground truth for an Excel file."""
+
+    ground_truth_id: str = Field(..., description="Unique identifier")
+    file_name: str = Field(..., description="Original Excel filename for matching")
+    file_name_normalized: str = Field(
+        ..., description="Lowercase, trimmed filename for fuzzy matching"
+    )
+    created_by: str = Field(..., description="Who created this ground truth")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    version: int = Field(default=1, description="Version number")
+    notes: str | None = Field(None, description="Optional notes")
+    sheets: list[GroundTruthSheet] = Field(
+        default_factory=list, description="Sheets with validated questions"
+    )
+    total_question_count: int = Field(
+        ..., description="Total count of all questions across sheets"
+    )
+
+
+class GroundTruthSummary(BaseModel):
+    """Summary of a ground truth for list views."""
+
+    ground_truth_id: str
+    file_name: str
+    created_by: str
+    updated_at: datetime
+    total_question_count: int
+
+
+class GroundTruthCreate(BaseModel):
+    """Request to create a new ground truth."""
+
+    file_name: str = Field(..., description="Original Excel filename")
+    created_by: str = Field(..., description="Creator's name or email")
+    notes: str | None = Field(None, description="Optional notes")
+    sheets: list[GroundTruthSheet] = Field(
+        ..., description="Sheets with questions"
+    )
+
+    @field_validator("file_name", "created_by", mode="before")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        """Strip whitespace from text fields."""
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, v: str | None) -> str | None:
+        """Strip whitespace from notes."""
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
+
+
+class GroundTruthUpdate(BaseModel):
+    """Request to update an existing ground truth."""
+
+    created_by: str | None = Field(None, description="Update creator")
+    notes: str | None = Field(None, description="Update notes")
+    sheets: list[GroundTruthSheet] | None = Field(
+        None, description="Update sheets and questions"
+    )
+
+
+class GroundTruthComparisonResult(BaseModel):
+    """Result of comparing extraction results against ground truth."""
+
+    ground_truth_id: str
+    ground_truth_file_name: str
+    approach_key: str
+    model: str | None = None
+
+    # Counts
+    ground_truth_count: int = Field(..., description="Total questions in ground truth")
+    extracted_count: int = Field(..., description="Total questions extracted")
+
+    # Matching results
+    exact_matches: int = Field(0, description="Questions matching exactly")
+    fuzzy_matches: int = Field(0, description="Questions matching with >80% similarity")
+    missed_questions: int = Field(0, description="Ground truth questions not found")
+    extra_questions: int = Field(0, description="Extracted questions not in ground truth")
+
+    # Scores (0.0 - 1.0)
+    precision: float = Field(0.0, description="exact_matches / extracted_count")
+    recall: float = Field(0.0, description="exact_matches / ground_truth_count")
+    f1_score: float = Field(0.0, description="Harmonic mean of precision and recall")
+
+    # Details
+    matched_questions: list[str] = Field(
+        default_factory=list, description="List of matched question IDs"
+    )
+    missed_question_ids: list[str] = Field(
+        default_factory=list, description="Ground truth question IDs not found"
+    )

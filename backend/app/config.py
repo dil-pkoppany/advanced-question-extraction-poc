@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     runs_dir: Path = output_dir / "runs"
     comparisons_dir: Path = output_dir / "comparisons"
     benchmarks_dir: Path = output_dir / "benchmarks"
+    ground_truth_dir: Path = output_dir / "ground_truth"
     upload_dir: Path = base_dir / "uploads"
 
     # LLM settings
@@ -71,6 +72,7 @@ class Settings(BaseSettings):
             self.runs_dir,
             self.comparisons_dir,
             self.benchmarks_dir,
+            self.ground_truth_dir,
             self.upload_dir,
         ]:
             directory.mkdir(parents=True, exist_ok=True)

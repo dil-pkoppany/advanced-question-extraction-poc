@@ -15,6 +15,13 @@ from .models import (
     UploadResponse,
     ExtractionRequest,
     ExtractionResponse,
+    GroundTruthQuestion,
+    GroundTruthSheet,
+    GroundTruth,
+    GroundTruthSummary,
+    GroundTruthCreate,
+    GroundTruthUpdate,
+    GroundTruthComparisonResult,
 )
 
 __all__ = [
@@ -32,4 +39,11 @@ __all__ = [
     "UploadResponse",
     "ExtractionRequest",
     "ExtractionResponse",
+    "GroundTruthQuestion",
+    "GroundTruthSheet",
+    "GroundTruth",
+    "GroundTruthSummary",
+    "GroundTruthCreate",
+    "GroundTruthUpdate",
+    "GroundTruthComparisonResult",
 ]

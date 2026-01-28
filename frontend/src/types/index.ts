@@ -128,5 +128,77 @@ export interface WizardState {
   error?: string;
 }
 
+/** A single validated question in ground truth */
+export interface GroundTruthQuestion {
+  id: string;
+  question_text: string;
+  question_type: QuestionType;
+  answers?: string[];
+  row_index?: number;
+}
+
+/** A sheet containing validated questions */
+export interface GroundTruthSheet {
+  sheet_name: string;
+  questions: GroundTruthQuestion[];
+}
+
+/** Complete ground truth for an Excel file */
+export interface GroundTruth {
+  ground_truth_id: string;
+  file_name: string;
+  file_name_normalized: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  notes?: string;
+  sheets: GroundTruthSheet[];
+  total_question_count: number;
+}
+
+/** Summary of a ground truth for list views */
+export interface GroundTruthSummary {
+  ground_truth_id: string;
+  file_name: string;
+  created_by: string;
+  updated_at: string;
+  total_question_count: number;
+}
+
+/** Request to create a new ground truth */
+export interface GroundTruthCreate {
+  file_name: string;
+  created_by: string;
+  notes?: string;
+  sheets: GroundTruthSheet[];
+}
+
+/** Request to update an existing ground truth */
+export interface GroundTruthUpdate {
+  created_by?: string;
+  notes?: string;
+  sheets?: GroundTruthSheet[];
+}
+
+/** Result of comparing extraction with ground truth */
+export interface GroundTruthComparisonResult {
+  ground_truth_id: string;
+  ground_truth_file_name: string;
+  approach_key: string;
+  model?: string;
+  ground_truth_count: number;
+  extracted_count: number;
+  exact_matches: number;
+  fuzzy_matches: number;
+  missed_questions: number;
+  extra_questions: number;
+  precision: number;
+  recall: number;
+  f1_score: number;
+  matched_questions: string[];
+  missed_question_ids: string[];
+}
+
 /** App view mode */
-export type AppView = 'wizard' | 'history';
+export type AppView = 'wizard' | 'history' | 'groundtruth';

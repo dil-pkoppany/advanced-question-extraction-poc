@@ -19,6 +19,7 @@ from ..services.approach_auto import AutoExtractionService
 from ..services.approach_guided import GuidedExtractionService
 from ..services.approach_judge import JudgeExtractionService
 from ..evaluation.metrics import MetricsCalculator
+from .upload import _get_original_filename
 
 router = APIRouter(prefix="/extract", tags=["extraction"])
 
@@ -35,8 +36,11 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
     """
     settings = get_settings()
 
-    # Find the uploaded file
-    matching_files = list(settings.upload_dir.glob(f"{request.file_id}.*"))
+    # Find the uploaded file (exclude .meta.json files)
+    matching_files = [
+        f for f in settings.upload_dir.glob(f"{request.file_id}.*")
+        if f.suffix.lower() in {'.xlsx', '.xls', '.xlsm', '.xltx', '.xltm'}
+    ]
     if not matching_files:
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -206,10 +210,13 @@ async def _save_run(
     prompts_dir = run_dir / "prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
 
+    # Get the original filename
+    original_filename = _get_original_filename(request.file_id) or request.file_id
+
     # Save metadata
     metadata = RunMetadata(
         run_id=run_id,
-        file_name=request.file_id,
+        file_name=original_filename,
         file_id=request.file_id,
         approaches_run=[r.approach for r in results.values()],
         config=request.config.model_dump(),

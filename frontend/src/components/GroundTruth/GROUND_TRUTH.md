@@ -1,0 +1,317 @@
+# Ground Truth Feature
+
+The Ground Truth feature allows users to create and manage validated question sets ("golden data") for Excel files. These can be used to measure extraction accuracy against known-correct results.
+
+## Overview
+
+```mermaid
+flowchart TB
+    subgraph create [Creating Ground Truth]
+        Upload[Upload Excel]
+        Extract[Extract Sheet Names]
+        Form[Fill Question Form]
+        Save[Save to Backend]
+    end
+
+    subgraph use [Using Ground Truth]
+        Match[Match by Filename]
+        Compare[Compare vs Extraction]
+        Metrics[Precision/Recall]
+    end
+
+    Upload --> Extract --> Form --> Save
+    Save --> Match --> Compare --> Metrics
+```
+
+## Components
+
+### GroundTruthPage (`GroundTruthPage.tsx`)
+
+Main page component with two modes:
+
+| Mode | Description |
+|------|-------------|
+| List View | Shows all existing ground truths in a table |
+| Editor View | Create or edit a ground truth |
+
+**Props:**
+```typescript
+interface GroundTruthPageProps {
+  onBackToWizard: () => void;
+}
+```
+
+**State:**
+- `viewMode`: `'list' | 'create' | 'edit'`
+- `editingId`: ID of ground truth being edited
+- `fileMetadata`: Excel metadata for new entries
+
+---
+
+### GroundTruthEditor (`GroundTruthEditor.tsx`)
+
+Form for creating and editing ground truths.
+
+**Features:**
+- File upload to extract sheet names
+- Manual filename entry option
+- Sheet tabs with question counts
+- Add/edit/remove sheets
+- Add/edit/remove questions per sheet
+- Question type selection
+- Answer options for choice types
+- Total question count summary
+
+**Form Sections:**
+
+1. **File Upload/Entry**
+   - Drag-and-drop Excel upload
+   - OR manual filename entry
+
+2. **File Information**
+   - File name (from upload or manual)
+   - Created by (required)
+   - Notes (optional)
+
+3. **Sheets & Questions**
+   - Tab per sheet
+   - Editable sheet names
+   - Question list with inline forms
+
+---
+
+## Data Flow
+
+### Creating Ground Truth
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Editor
+    participant API
+    participant Backend
+
+    User->>Editor: Upload Excel
+    Editor->>API: POST /api/upload/
+    API-->>Editor: FileMetadata with sheets
+
+    User->>Editor: Fill questions
+    User->>Editor: Click Save
+
+    Editor->>API: POST /api/ground-truth/
+    API->>Backend: Save to ground_truth_dir
+    Backend-->>API: GroundTruth object
+    API-->>Editor: Success
+    Editor->>User: Return to list
+```
+
+### Editing Ground Truth
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Page
+    participant API
+    participant Backend
+
+    User->>Page: Click Edit
+    Page->>API: GET /api/ground-truth/{id}
+    API->>Backend: Load JSON file
+    Backend-->>API: GroundTruth data
+    API-->>Page: Populate editor
+
+    User->>Page: Make changes
+    User->>Page: Click Save
+
+    Page->>API: PUT /api/ground-truth/{id}
+    API->>Backend: Update JSON file
+    Backend-->>API: Updated GroundTruth
+    API-->>Page: Success
+```
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/ground-truth/` | Create new ground truth |
+| GET | `/api/ground-truth/` | List all (summaries) |
+| GET | `/api/ground-truth/{id}` | Get full data |
+| PUT | `/api/ground-truth/{id}` | Update existing |
+| DELETE | `/api/ground-truth/{id}` | Delete |
+| GET | `/api/ground-truth/by-filename/{name}` | Find by Excel filename |
+
+---
+
+## Data Types
+
+### GroundTruthQuestion
+
+```typescript
+interface GroundTruthQuestion {
+  id: string;           // User-assigned (Q001, Q002...)
+  question_text: string;
+  question_type: QuestionType;
+  answers?: string[];   // For choice types
+  row_index?: number;   // Optional Excel row reference
+}
+```
+
+### GroundTruthSheet
+
+```typescript
+interface GroundTruthSheet {
+  sheet_name: string;
+  questions: GroundTruthQuestion[];
+}
+```
+
+### GroundTruth
+
+```typescript
+interface GroundTruth {
+  ground_truth_id: string;
+  file_name: string;
+  file_name_normalized: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  notes?: string;
+  sheets: GroundTruthSheet[];
+  total_question_count: number;
+}
+```
+
+---
+
+## Storage
+
+Ground truths are stored as JSON files in:
+
+```
+output/ground_truth/{ground_truth_id}.json
+```
+
+Example filename: `gt_20260128_123456_a1b2c3d4.json`
+
+### File Format
+
+```json
+{
+  "ground_truth_id": "gt_20260128_123456_a1b2c3d4",
+  "file_name": "Survey_2024.xlsx",
+  "file_name_normalized": "survey_2024.xlsx",
+  "created_by": "john.doe@company.com",
+  "created_at": "2026-01-28T12:34:56.789000",
+  "updated_at": "2026-01-28T12:34:56.789000",
+  "version": 1,
+  "notes": "Validated by QA team",
+  "sheets": [
+    {
+      "sheet_name": "ESG DDQ",
+      "questions": [
+        {
+          "id": "Q001",
+          "question_text": "What is your company name?",
+          "question_type": "open_ended",
+          "answers": null,
+          "row_index": 5
+        }
+      ]
+    }
+  ],
+  "total_question_count": 126
+}
+```
+
+---
+
+## Usage Workflow
+
+1. **Navigate** to Ground Truth page via nav bar
+2. **Create New** or **Edit** existing
+3. **Upload Excel** to auto-populate sheet names (or enter manually)
+4. **Add Questions** per sheet with:
+   - Question ID (auto-suggested)
+   - Question text
+   - Question type
+   - Answer options (for choice types)
+   - Row index (optional)
+5. **Save** the ground truth
+6. Later, **compare** extraction results against ground truth
+
+---
+
+## Comparison Integration
+
+When ground truth exists for an Excel file, extraction results are automatically compared in the Results view.
+
+### Comparison Metrics Grid
+
+| Metric | Description | Color Coding |
+|--------|-------------|--------------|
+| **Count** | Number of questions extracted | Green if equals GT count |
+| **Time** | Extraction duration | No color (not comparable) |
+| **Text Match** | % of GT questions found in extraction | Green ≥90%, Orange 70-89%, Red <70% |
+| **Type Match** | % of matched questions with correct type | Green ≥90%, Orange 70-89%, Red <70% |
+| **Answer Match** | % of matched questions with correct answers | Green ≥90%, Orange 70-89%, Red <70% |
+| **Overall** | Weighted accuracy score | Green ≥90%, Orange 70-89%, Red <70% |
+
+**Overall Accuracy Formula:**
+```
+overall = (text_match × 0.5) + (type_match × 0.3) + (answer_match × 0.2)
+```
+
+### Question Row Coloring
+
+Colors are applied **per-cell** (per approach column), not to entire rows:
+
+| Cell Color | Meaning |
+|------------|---------|
+| **Green border** | Perfect match - text, type, AND answers match GT |
+| **Orange border** | Partial match - text matches, but type OR answers differ |
+| **Red border** | Missing (GT question not extracted) or Extra (not in GT) |
+| **No border** | No ground truth to compare against |
+
+### Comparison Data Types
+
+```typescript
+interface DetailedMetrics {
+  textMatchRate: number;    // GT questions found / total GT questions
+  typeMatchRate: number;    // Correct types / matched questions
+  answerMatchRate: number;  // Correct answers / questions with answers
+  overallAccuracy: number;  // Weighted average
+  matchedCount: number;     // Number of exact text matches
+}
+```
+
+### Backend Comparison Endpoint
+
+```typescript
+POST /api/ground-truth/compare/{filename}
+
+// Request body
+{
+  "results": Record<string, ExtractionResult>
+}
+
+// Response
+Record<string, GroundTruthComparisonResult>
+```
+
+```typescript
+interface GroundTruthComparisonResult {
+  ground_truth_count: number;
+  extracted_count: number;
+  exact_matches: number;
+  fuzzy_matches: number;
+  missed_questions: number;
+  extra_questions: number;
+  precision: number;   // matches / extracted
+  recall: number;      // matches / ground_truth
+  f1_score: number;    // harmonic mean of precision & recall
+  matched_questions: Array<{ gt_id: string; gt_text: string; extracted_text: string }>;
+  missed_question_ids: string[];
+}

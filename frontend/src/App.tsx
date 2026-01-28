@@ -5,6 +5,7 @@ import { ApproachStep } from './components/Wizard/ApproachStep';
 import { ConfigStep } from './components/Wizard/ConfigStep';
 import { ResultsStep } from './components/Wizard/ResultsStep';
 import { HistoryPage } from './components/History';
+import { GroundTruthPage } from './components/GroundTruth';
 
 const STEPS: { key: WizardStep; label: string }[] = [
   { key: 'upload', label: 'Upload' },
@@ -92,6 +93,7 @@ export default function App() {
         return (
           <ResultsStep
             fileId={state.fileMetadata!.file_id}
+            fileName={state.fileMetadata!.file_name}
             config={state.config}
             results={state.results}
             onResultsReceived={(results) => {
@@ -112,8 +114,8 @@ export default function App() {
     }
   };
 
-  // Use wide container for results step or history view
-  const isWideView = state.step === 'results' || state.step === 'running' || currentView === 'history';
+  // Use wide container for results step, history view, or ground truth view
+  const isWideView = state.step === 'results' || state.step === 'running' || currentView !== 'wizard';
   const containerClass = `container ${isWideView ? 'container-wide' : ''}`;
 
   // Navigation component
@@ -131,8 +133,34 @@ export default function App() {
       >
         History
       </button>
+      <button 
+        className={`nav-btn ${currentView === 'groundtruth' ? 'active' : ''}`}
+        onClick={() => setCurrentView('groundtruth')}
+      >
+        Ground Truth
+      </button>
     </div>
   );
+
+  // Render ground truth view
+  if (currentView === 'groundtruth') {
+    return (
+      <div className={containerClass}>
+        <header style={{ textAlign: 'center', marginBottom: '2rem', color: 'white' }}>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+            Question Extraction Testing Framework
+          </h1>
+          <p style={{ opacity: 0.8 }}>
+            Compare different approaches for extracting questions from Excel files
+          </p>
+        </header>
+
+        {renderNavigation()}
+
+        <GroundTruthPage onBackToWizard={() => setCurrentView('wizard')} />
+      </div>
+    );
+  }
 
   // Render history view
   if (currentView === 'history') {
