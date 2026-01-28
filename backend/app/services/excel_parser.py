@@ -1,6 +1,8 @@
-"""Excel file parsing utilities."""
+"""Excel and CSV file parsing utilities."""
 
+import csv
 import logging
+from pathlib import Path
 from typing import Any
 
 import openpyxl
@@ -10,6 +12,10 @@ from ..schemas import SheetMetadata, ColumnMapping, ExtractedQuestion, QuestionT
 
 logger = logging.getLogger(__name__)
 
+# File type detection
+EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xltx", ".xltm"}
+CSV_EXTENSIONS = {".csv"}
+
 
 class ExcelParser:
     """Parse Excel files for metadata and content extraction."""
@@ -17,12 +23,73 @@ class ExcelParser:
     def __init__(self):
         self.markitdown = MarkItDown()
 
+    def _is_csv(self, file_path: str) -> bool:
+        """Check if file is a CSV based on extension."""
+        return Path(file_path).suffix.lower() in CSV_EXTENSIONS
+
     def get_file_metadata(self, file_path: str) -> list[SheetMetadata]:
         """
-        Extract metadata from an Excel file.
+        Extract metadata from an Excel or CSV file.
 
         Returns sheet names, column headers, row counts, and sample data.
         """
+        if self._is_csv(file_path):
+            return self._get_csv_metadata(file_path)
+        return self._get_excel_metadata(file_path)
+
+    def _get_csv_metadata(self, file_path: str) -> list[SheetMetadata]:
+        """Extract metadata from a CSV file."""
+        # CSV files have a single "sheet" named after the file
+        file_name = Path(file_path).stem
+        
+        with open(file_path, 'r', encoding='utf-8-sig', newline='') as f:
+            # Detect dialect
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+            except csv.Error:
+                dialect = csv.excel
+            
+            reader = csv.reader(f, dialect)
+            rows = list(reader)
+        
+        if not rows:
+            return [SheetMetadata(name=file_name, columns=[], row_count=0, sample_data=[])]
+        
+        # First row is headers
+        columns = []
+        for col_idx, value in enumerate(rows[0]):
+            if value and value.strip():
+                columns.append(value.strip())
+            else:
+                columns.append(f"Column_{col_idx + 1}")
+        
+        # Count data rows (excluding header)
+        data_rows = rows[1:]
+        row_count = sum(1 for row in data_rows if any(cell.strip() for cell in row if cell))
+        
+        # Get sample data (first 5 data rows)
+        sample_data = []
+        for row in data_rows[:5]:
+            row_data = {}
+            for col_idx, value in enumerate(row):
+                if col_idx < len(columns):
+                    row_data[columns[col_idx]] = value.strip() if value and value.strip() else None
+            if any(v is not None for v in row_data.values()):
+                sample_data.append(row_data)
+        
+        return [
+            SheetMetadata(
+                name=file_name,
+                columns=columns,
+                row_count=row_count,
+                sample_data=sample_data,
+            )
+        ]
+
+    def _get_excel_metadata(self, file_path: str) -> list[SheetMetadata]:
+        """Extract metadata from an Excel file."""
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         sheets_metadata = []
 
@@ -70,10 +137,66 @@ class ExcelParser:
 
     def convert_to_markdown(self, file_path: str) -> str:
         """
-        Convert Excel file to Markdown using MarkItDown.
+        Convert Excel or CSV file to Markdown.
+
+        For Excel: Uses MarkItDown
+        For CSV: Uses custom conversion to markdown table
 
         This is used by Approach 1 (Auto LLM).
         """
+        if self._is_csv(file_path):
+            return self._convert_csv_to_markdown(file_path)
+        
+        return self._convert_excel_to_markdown(file_path)
+
+    def _convert_csv_to_markdown(self, file_path: str) -> str:
+        """Convert CSV file to Markdown table format."""
+        with open(file_path, 'r', encoding='utf-8-sig', newline='') as f:
+            # Detect dialect
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+            except csv.Error:
+                dialect = csv.excel
+            
+            reader = csv.reader(f, dialect)
+            rows = list(reader)
+        
+        if not rows:
+            return ""
+        
+        # Build markdown table
+        lines = []
+        file_name = Path(file_path).stem
+        lines.append(f"# {file_name}\n")
+        
+        # Header row
+        headers = rows[0]
+        lines.append("| " + " | ".join(h if h else "-" for h in headers) + " |")
+        lines.append("| " + " | ".join("---" for _ in headers) + " |")
+        
+        # Data rows
+        for row in rows[1:]:
+            # Pad row to match header length
+            padded_row = row + [""] * (len(headers) - len(row))
+            # Clean values
+            clean_values = []
+            for val in padded_row[:len(headers)]:
+                if val and val.strip():
+                    # Escape pipe characters and clean whitespace
+                    clean_val = val.strip().replace("|", "\\|").replace("\n", " ")
+                    clean_values.append(clean_val)
+                else:
+                    clean_values.append("-")
+            lines.append("| " + " | ".join(clean_values) + " |")
+        
+        markdown_text = "\n".join(lines)
+        logger.info(f"CSV converted to {len(markdown_text)} characters of markdown")
+        return markdown_text
+
+    def _convert_excel_to_markdown(self, file_path: str) -> str:
+        """Convert Excel file to Markdown using MarkItDown."""
         result = self.markitdown.convert(file_path)
 
         if result and hasattr(result, "text_content"):
@@ -102,6 +225,136 @@ class ExcelParser:
         This is used by Approaches 2 and 3.
         Returns raw extracted data without LLM processing.
         """
+        if self._is_csv(file_path):
+            return self._extract_rows_from_csv(file_path, column_mappings)
+        return self._extract_rows_from_excel(file_path, column_mappings)
+
+    def _extract_rows_from_csv(
+        self,
+        file_path: str,
+        column_mappings: list[ColumnMapping],
+    ) -> list[ExtractedQuestion]:
+        """Extract questions from CSV file."""
+        file_name = Path(file_path).stem
+        questions = []
+        
+        with open(file_path, 'r', encoding='utf-8-sig', newline='') as f:
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+            except csv.Error:
+                dialect = csv.excel
+            
+            reader = csv.reader(f, dialect)
+            rows = list(reader)
+        
+        if not rows:
+            return questions
+        
+        # Build column name mapping (same logic as _get_csv_metadata)
+        headers = []
+        for col_idx, value in enumerate(rows[0]):
+            if value and value.strip():
+                headers.append(value.strip())
+            else:
+                headers.append(f"Column_{col_idx + 1}")
+        
+        for mapping in column_mappings:
+            # CSV files have a single "sheet" named after the file
+            if mapping.sheet_name != file_name:
+                logger.warning(f"Sheet '{mapping.sheet_name}' not found (CSV has sheet '{file_name}')")
+                continue
+            
+            # Find column indices
+            col_indices = {}
+            for idx, col_name in enumerate(headers):
+                if col_name == mapping.question_column:
+                    col_indices["question"] = idx
+                if mapping.answer_column and col_name == mapping.answer_column:
+                    col_indices["answer"] = idx
+                if mapping.type_column and col_name == mapping.type_column:
+                    col_indices["type"] = idx
+            
+            if "question" not in col_indices:
+                logger.warning(
+                    f"Question column '{mapping.question_column}' not found in '{mapping.sheet_name}'"
+                )
+                continue
+            
+            # Extract rows (row indices are 1-based, header is row 1, data starts at row 2)
+            data_rows = rows[1:]
+            start_idx = mapping.start_row - 2  # Convert to 0-based index into data_rows
+            end_idx = (mapping.end_row - 1) if mapping.end_row else len(data_rows)
+            
+            for data_idx in range(max(0, start_idx), min(end_idx, len(data_rows))):
+                row = data_rows[data_idx]
+                row_idx = data_idx + 2  # Convert back to 1-based row number
+                
+                # Get question text
+                q_val = row[col_indices["question"]] if col_indices["question"] < len(row) else ""
+                question_text = q_val.strip() if q_val else ""
+                
+                if not question_text or question_text == "-":
+                    continue
+                
+                # Get answers if available
+                answers = None
+                if "answer" in col_indices and col_indices["answer"] < len(row):
+                    a_val = row[col_indices["answer"]]
+                    if a_val and a_val.strip():
+                        answer_text = a_val
+                        if "|" in answer_text:
+                            answers = [a.strip() for a in answer_text.split("|")]
+                        elif "\n" in answer_text:
+                            answers = [a.strip() for a in answer_text.split("\n")]
+                        else:
+                            answers = [answer_text.strip()]
+                
+                # Determine question type
+                question_type = QuestionType.OPEN_ENDED
+                if "type" in col_indices and col_indices["type"] < len(row):
+                    t_val = row[col_indices["type"]]
+                    if t_val and t_val.strip():
+                        type_str = t_val.lower().strip()
+                        type_mapping = {
+                            "open": QuestionType.OPEN_ENDED,
+                            "open_ended": QuestionType.OPEN_ENDED,
+                            "single": QuestionType.SINGLE_CHOICE,
+                            "single_choice": QuestionType.SINGLE_CHOICE,
+                            "multiple": QuestionType.MULTIPLE_CHOICE,
+                            "multiple_choice": QuestionType.MULTIPLE_CHOICE,
+                            "grouped": QuestionType.GROUPED_QUESTION,
+                            "grouped_question": QuestionType.GROUPED_QUESTION,
+                            "yes_no": QuestionType.YES_NO,
+                            "yesno": QuestionType.YES_NO,
+                        }
+                        question_type = type_mapping.get(type_str, QuestionType.OPEN_ENDED)
+                elif answers:
+                    if len(answers) == 2 and set(a.lower() for a in answers) <= {"yes", "no"}:
+                        question_type = QuestionType.YES_NO
+                    else:
+                        question_type = QuestionType.SINGLE_CHOICE
+                
+                questions.append(
+                    ExtractedQuestion(
+                        question_text=question_text,
+                        question_type=question_type,
+                        answers=answers,
+                        row_index=row_idx,
+                        sheet_name=mapping.sheet_name,
+                    )
+                )
+        
+        logger.info(f"Extracted {len(questions)} questions from CSV columns")
+        return questions
+
+    def _extract_rows_from_excel(
+        self,
+        file_path: str,
+        column_mappings: list[ColumnMapping],
+    ) -> list[ExtractedQuestion]:
+        """Extract questions from Excel file."""
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         questions = []
 
@@ -213,6 +466,75 @@ class ExcelParser:
 
         Used for validation in Approaches 2 and 3.
         """
+        if self._is_csv(file_path):
+            return self._count_rows_in_csv(file_path, column_mappings)
+        return self._count_rows_in_excel(file_path, column_mappings)
+
+    def _count_rows_in_csv(
+        self,
+        file_path: str,
+        column_mappings: list[ColumnMapping],
+    ) -> int:
+        """Count non-empty rows in CSV file."""
+        file_name = Path(file_path).stem
+        total_count = 0
+        
+        with open(file_path, 'r', encoding='utf-8-sig', newline='') as f:
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+            except csv.Error:
+                dialect = csv.excel
+            
+            reader = csv.reader(f, dialect)
+            rows = list(reader)
+        
+        if not rows:
+            return 0
+        
+        # Build column name mapping
+        headers = []
+        for col_idx, value in enumerate(rows[0]):
+            if value and value.strip():
+                headers.append(value.strip())
+            else:
+                headers.append(f"Column_{col_idx + 1}")
+        
+        for mapping in column_mappings:
+            if mapping.sheet_name != file_name:
+                continue
+            
+            # Find question column index
+            q_col_idx = None
+            for idx, col_name in enumerate(headers):
+                if col_name == mapping.question_column:
+                    q_col_idx = idx
+                    break
+            
+            if q_col_idx is None:
+                continue
+            
+            # Count non-empty rows
+            data_rows = rows[1:]
+            start_idx = mapping.start_row - 2
+            end_idx = (mapping.end_row - 1) if mapping.end_row else len(data_rows)
+            
+            for data_idx in range(max(0, start_idx), min(end_idx, len(data_rows))):
+                row = data_rows[data_idx]
+                if q_col_idx < len(row):
+                    val = row[q_col_idx]
+                    if val and val.strip() and val.strip() != "-":
+                        total_count += 1
+        
+        return total_count
+
+    def _count_rows_in_excel(
+        self,
+        file_path: str,
+        column_mappings: list[ColumnMapping],
+    ) -> int:
+        """Count non-empty rows in Excel file."""
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         total_count = 0
 

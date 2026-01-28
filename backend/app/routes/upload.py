@@ -1,4 +1,4 @@
-"""File upload endpoint for Excel files."""
+"""File upload endpoint for Excel and CSV files."""
 
 import json
 import uuid
@@ -10,6 +10,11 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from ..config import get_settings
 from ..schemas import FileMetadata, SheetMetadata, UploadResponse
 from ..services.excel_parser import ExcelParser
+
+# Supported file extensions
+EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xltx", ".xltm"}
+CSV_EXTENSIONS = {".csv"}
+ALLOWED_EXTENSIONS = EXCEL_EXTENSIONS | CSV_EXTENSIONS
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -30,10 +35,10 @@ def _get_original_filename(file_id: str) -> str | None:
 @router.post("/", response_model=UploadResponse)
 async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
     """
-    Upload an Excel file and return metadata about its structure.
+    Upload an Excel or CSV file and return metadata about its structure.
 
     This endpoint:
-    1. Validates the file is an Excel file (.xlsx, .xls)
+    1. Validates the file is an Excel file (.xlsx, .xls) or CSV (.csv)
     2. Saves it to the uploads directory
     3. Parses sheet names, columns, and row counts
     4. Returns metadata for the wizard configuration step
@@ -44,12 +49,11 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    allowed_extensions = {".xlsx", ".xls", ".xlsm"}
     file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in allowed_extensions:
+    if file_ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}",
+            detail=f"Invalid file type. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
         )
 
     # Generate unique file ID
@@ -69,14 +73,14 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
 
-    # Parse Excel metadata
+    # Parse file metadata
     try:
         parser = ExcelParser()
         sheets_metadata = parser.get_file_metadata(str(file_path))
     except Exception as e:
         # Clean up on failure
         file_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"Failed to parse Excel file: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
     # Build response
     metadata = FileMetadata(
@@ -102,7 +106,7 @@ async def get_file_metadata(file_id: str) -> FileMetadata:
     # Find the file (exclude .meta.json files)
     matching_files = [
         f for f in settings.upload_dir.glob(f"{file_id}.*")
-        if f.suffix.lower() in {'.xlsx', '.xls', '.xlsm', '.xltx', '.xltm'}
+        if f.suffix.lower() in ALLOWED_EXTENSIONS
     ]
     if not matching_files:
         raise HTTPException(status_code=404, detail="File not found")
@@ -114,7 +118,7 @@ async def get_file_metadata(file_id: str) -> FileMetadata:
         parser = ExcelParser()
         sheets_metadata = parser.get_file_metadata(str(file_path))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse Excel file: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
     # Get original filename from metadata file
     original_filename = _get_original_filename(file_id) or file_path.name

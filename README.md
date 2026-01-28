@@ -44,7 +44,7 @@ flowchart LR
 
 ## Flow
 
-1. **Upload** - Drop an Excel file (.xlsx/.xls)
+1. **Upload** - Drop an Excel file (.xlsx/.xls) or CSV file (.csv)
 2. **Select Approach** - Choose extraction method and model
 3. **Configure** - Map columns for guided approaches (optional)
 4. **Extract** - Run extraction with selected settings

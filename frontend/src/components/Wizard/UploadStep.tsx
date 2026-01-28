@@ -34,6 +34,7 @@ export function UploadStep({ onUploadComplete, onError }: UploadStepProps) {
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
       'application/vnd.ms-excel': ['.xls'],
+      'text/csv': ['.csv'],
     },
     maxFiles: 1,
   });
@@ -48,7 +49,7 @@ export function UploadStep({ onUploadComplete, onError }: UploadStepProps) {
     <div className="card">
       <div className="card-header">
         <span style={{ fontSize: '1.5rem' }}>📄</span>
-        <h2>Upload Excel File</h2>
+        <h2>Upload File</h2>
       </div>
 
       <div
@@ -62,13 +63,13 @@ export function UploadStep({ onUploadComplete, onError }: UploadStepProps) {
             'Drop the file here...'
           ) : (
             <>
-              Drag and drop an Excel file here, or{' '}
+              Drag and drop a file here, or{' '}
               <strong>click to select</strong>
             </>
           )}
         </p>
         <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
-          Supported formats: .xlsx, .xls
+          Supported formats: .xlsx, .xls, .csv
         </p>
       </div>
 

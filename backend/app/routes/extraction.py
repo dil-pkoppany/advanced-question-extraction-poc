@@ -39,7 +39,7 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
     # Find the uploaded file (exclude .meta.json files)
     matching_files = [
         f for f in settings.upload_dir.glob(f"{request.file_id}.*")
-        if f.suffix.lower() in {'.xlsx', '.xls', '.xlsm', '.xltx', '.xltm'}
+        if f.suffix.lower() in {'.xlsx', '.xls', '.xlsm', '.xltx', '.xltm', '.csv'}
     ]
     if not matching_files:
         raise HTTPException(status_code=404, detail="File not found")

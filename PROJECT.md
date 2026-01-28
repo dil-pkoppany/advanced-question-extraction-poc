@@ -18,7 +18,7 @@ advanced-question-extraction-poc/
 │   │   │   ├── comparison.py          # Comparison endpoints
 │   │   │   └── ground_truth.py        # Ground truth CRUD + comparison
 │   │   ├── services/
-│   │   │   ├── excel_parser.py        # Excel parsing utilities
+│   │   │   ├── excel_parser.py        # Excel/CSV parsing utilities
 │   │   │   ├── approach_auto.py       # Approach 1: Fully automatic
 │   │   │   ├── approach_guided.py     # Approach 2: User-guided
 │   │   │   ├── approach_judge.py      # Approach 3: Deterministic + judge
@@ -68,7 +68,7 @@ advanced-question-extraction-poc/
 │   └── ground_truth/                  # Ground truth files
 │       └── gt_{timestamp}_{id}.json
 │
-└── docs/                              # Sample Excel files for testing
+└── docs/                              # Sample Excel/CSV files for testing
 ```
 
 ## LLM Models
@@ -145,7 +145,7 @@ With model comparison enabled, result files are named `approach_X_{model}_result
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/upload/` | Upload Excel file |
+| POST | `/api/upload/` | Upload Excel or CSV file |
 | GET | `/api/upload/{file_id}` | Get file metadata |
 | POST | `/api/extract/` | Run extraction |
 | GET | `/api/extract/runs` | List all runs |

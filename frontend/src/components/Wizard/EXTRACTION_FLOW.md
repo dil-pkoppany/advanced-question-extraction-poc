@@ -19,11 +19,11 @@ stateDiagram-v2
 
 ### 1. Upload Step (`UploadStep.tsx`)
 
-**Purpose**: Accept Excel file from user.
+**Purpose**: Accept Excel or CSV file from user.
 
 **Behavior**:
 - Drag-and-drop zone using `react-dropzone`
-- Accepts `.xlsx` and `.xls` files
+- Accepts `.xlsx`, `.xls`, and `.csv` files
 - Shows file preview with name and size
 - Uploads to `POST /api/upload/`
 
