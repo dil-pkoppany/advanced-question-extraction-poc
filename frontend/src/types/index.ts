@@ -86,6 +86,7 @@ export interface ExtractionResult {
   error?: string;
   questions: ExtractedQuestion[];
   metrics?: ExtractionMetrics;
+  prompt?: string;
   raw_response?: string;
 }
 
@@ -105,6 +106,16 @@ export interface ExtractionResponse {
   comparison?: ComparisonResult;
 }
 
+/** Metadata for a historical run */
+export interface RunMetadata {
+  run_id: string;
+  file_name: string;
+  file_id: string;
+  timestamp: string;
+  approaches_run: number[];
+  config: ExtractionConfig;
+}
+
 /** Wizard step names */
 export type WizardStep = 'upload' | 'approach' | 'config' | 'running' | 'results';
 
@@ -116,3 +127,6 @@ export interface WizardState {
   results?: ExtractionResponse;
   error?: string;
 }
+
+/** App view mode */
+export type AppView = 'wizard' | 'history';

@@ -202,6 +202,10 @@ async def _save_run(
     run_dir = settings.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create prompts subdirectory
+    prompts_dir = run_dir / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+
     # Save metadata
     metadata = RunMetadata(
         run_id=run_id,
@@ -214,11 +218,26 @@ async def _save_run(
         metadata.model_dump_json(indent=2)
     )
 
-    # Save each approach result
+    # Save each approach result and its prompt
     for key, result in results.items():
+        # Save the result JSON
         (run_dir / f"{key}_result.json").write_text(
             result.model_dump_json(indent=2)
         )
+        
+        # Save the prompt to a separate text file for easy review
+        if result.prompt:
+            prompt_file = prompts_dir / f"{key}_prompt.txt"
+            prompt_header = f"""================================================================================
+PROMPT FOR: {key}
+Approach: {result.approach}
+Model: {result.model or 'default'}
+Success: {result.success}
+Questions Extracted: {len(result.questions)}
+================================================================================
+
+"""
+            prompt_file.write_text(prompt_header + result.prompt)
 
     # Save comparison if exists
     if comparison:

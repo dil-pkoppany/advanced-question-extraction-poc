@@ -142,6 +142,9 @@ class ExtractionResult(BaseModel):
     error: str | None = None
     questions: list[ExtractedQuestion] = Field(default_factory=list)
     metrics: ExtractionMetrics | None = None
+    prompt: str | None = Field(
+        None, description="The full prompt sent to the LLM (with all values interpolated)"
+    )
     raw_response: str | None = Field(
         None, description="Raw LLM response for debugging"
     )

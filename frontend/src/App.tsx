@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import type { WizardState, WizardStep, ExtractionConfig } from './types';
+import type { WizardState, WizardStep, ExtractionConfig, AppView } from './types';
 import { UploadStep } from './components/Wizard/UploadStep';
 import { ApproachStep } from './components/Wizard/ApproachStep';
 import { ConfigStep } from './components/Wizard/ConfigStep';
 import { ResultsStep } from './components/Wizard/ResultsStep';
+import { HistoryPage } from './components/History';
 
 const STEPS: { key: WizardStep; label: string }[] = [
   { key: 'upload', label: 'Upload' },
@@ -22,6 +23,7 @@ const initialConfig: ExtractionConfig = {
 };
 
 export default function App() {
+  const [currentView, setCurrentView] = useState<AppView>('wizard');
   const [state, setState] = useState<WizardState>({
     step: 'upload',
     config: initialConfig,
@@ -110,10 +112,49 @@ export default function App() {
     }
   };
 
-  // Use wide container for results step
-  const isResultsStep = state.step === 'results' || state.step === 'running';
-  const containerClass = `container ${isResultsStep ? 'container-wide' : ''}`;
+  // Use wide container for results step or history view
+  const isWideView = state.step === 'results' || state.step === 'running' || currentView === 'history';
+  const containerClass = `container ${isWideView ? 'container-wide' : ''}`;
 
+  // Navigation component
+  const renderNavigation = () => (
+    <div className="nav-bar">
+      <button 
+        className={`nav-btn ${currentView === 'wizard' ? 'active' : ''}`}
+        onClick={() => setCurrentView('wizard')}
+      >
+        New Extraction
+      </button>
+      <button 
+        className={`nav-btn ${currentView === 'history' ? 'active' : ''}`}
+        onClick={() => setCurrentView('history')}
+      >
+        History
+      </button>
+    </div>
+  );
+
+  // Render history view
+  if (currentView === 'history') {
+    return (
+      <div className={containerClass}>
+        <header style={{ textAlign: 'center', marginBottom: '2rem', color: 'white' }}>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+            Question Extraction Testing Framework
+          </h1>
+          <p style={{ opacity: 0.8 }}>
+            Compare different approaches for extracting questions from Excel files
+          </p>
+        </header>
+
+        {renderNavigation()}
+
+        <HistoryPage onBackToWizard={() => setCurrentView('wizard')} />
+      </div>
+    );
+  }
+
+  // Render wizard view
   return (
     <div className={containerClass}>
       <header style={{ textAlign: 'center', marginBottom: '2rem', color: 'white' }}>
@@ -124,6 +165,8 @@ export default function App() {
           Compare different approaches for extracting questions from Excel files
         </p>
       </header>
+
+      {renderNavigation()}
 
       {/* Step indicator */}
       <div className="steps">

@@ -67,6 +67,7 @@ class JudgeExtractionService:
             ExtractionResult with questions, confidence scores, and metrics
         """
         start_time = time.time()
+        sample_judge_prompt = None  # Track a sample judge prompt for saving
 
         try:
             # Step 1: Deterministic extraction from columns
@@ -79,6 +80,11 @@ class JudgeExtractionService:
                     success=False,
                     error="No questions found in specified columns",
                 )
+
+            # Generate a sample judge prompt for the first batch (for review)
+            batch_size = 10
+            first_batch = questions[:batch_size]
+            sample_judge_prompt = self._build_judge_prompt(first_batch)
 
             # Step 2: Run LLM judge on each question (batched)
             llm_start = time.time()
@@ -96,6 +102,22 @@ class JudgeExtractionService:
 
             total_time_ms = int((time.time() - start_time) * 1000)
 
+            # Build a descriptive prompt showing how Approach 3 works
+            approach_description = f"""APPROACH 3: Deterministic Extraction + LLM-as-Judge
+
+This approach does NOT use LLM for extraction. Instead:
+1. Questions are extracted DETERMINISTICALLY from the specified columns ({len(questions)} rows found)
+2. A separate LLM (judge model) validates each question in batches of {batch_size}
+3. The judge assigns confidence scores and validates if items are real questions
+
+SAMPLE JUDGE PROMPT (for first batch of {len(first_batch)} questions):
+================================================================================
+{sample_judge_prompt}
+================================================================================
+
+Total batches processed: {(len(questions) + batch_size - 1) // batch_size}
+"""
+
             return ExtractionResult(
                 approach=3,
                 success=True,
@@ -109,6 +131,7 @@ class JudgeExtractionService:
                     avg_confidence=round(avg_confidence, 4),
                     low_confidence_count=low_conf_count,
                 ),
+                prompt=approach_description,
             )
 
         except Exception as e:
@@ -117,6 +140,7 @@ class JudgeExtractionService:
                 approach=3,
                 success=False,
                 error=str(e),
+                prompt=sample_judge_prompt,
                 metrics=ExtractionMetrics(
                     extraction_count=0,
                     total_time_ms=int((time.time() - start_time) * 1000),

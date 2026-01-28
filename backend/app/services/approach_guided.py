@@ -69,6 +69,7 @@ class GuidedExtractionService:
             ExtractionResult with questions, metrics, and accuracy
         """
         start_time = time.time()
+        prompt = None  # Track prompt for saving even on failure
 
         try:
             # Step 1: Count expected rows (deterministic)
@@ -118,6 +119,7 @@ class GuidedExtractionService:
                     tokens_input=len(prompt) // 4,
                     tokens_output=len(response) // 4,
                 ),
+                prompt=prompt,
                 raw_response=response,
             )
 
@@ -127,6 +129,7 @@ class GuidedExtractionService:
                 approach=2,
                 success=False,
                 error=str(e),
+                prompt=prompt,
                 metrics=ExtractionMetrics(
                     extraction_count=0,
                     total_time_ms=int((time.time() - start_time) * 1000),

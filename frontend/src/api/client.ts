@@ -5,6 +5,7 @@ import type {
   ExtractionResponse,
   FileMetadata,
   ComparisonResult,
+  RunMetadata,
 } from '../types';
 
 const api = axios.create({
@@ -54,10 +55,8 @@ export async function getRunDetails(runId: string): Promise<ExtractionResponse> 
 }
 
 /** List all extraction runs */
-export async function listRuns(): Promise<
-  Array<{ run_id: string; file_name: string; timestamp: string }>
-> {
-  const response = await api.get('/extract/runs');
+export async function listRuns(): Promise<RunMetadata[]> {
+  const response = await api.get<RunMetadata[]>('/extract/runs');
   return response.data;
 }
 

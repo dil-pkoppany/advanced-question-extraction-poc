@@ -59,6 +59,7 @@ class AutoExtractionService:
             ExtractionResult with questions and metrics
         """
         start_time = time.time()
+        prompt = None  # Track prompt for saving even on failure
 
         try:
             # Step 1: Convert Excel to Markdown
@@ -92,6 +93,7 @@ class AutoExtractionService:
                     tokens_input=len(prompt) // 4,  # Approximate
                     tokens_output=len(response) // 4,
                 ),
+                prompt=prompt,
                 raw_response=response,
             )
 
@@ -101,6 +103,7 @@ class AutoExtractionService:
                 approach=1,
                 success=False,
                 error=str(e),
+                prompt=prompt,
                 metrics=ExtractionMetrics(
                     extraction_count=0,
                     total_time_ms=int((time.time() - start_time) * 1000),
