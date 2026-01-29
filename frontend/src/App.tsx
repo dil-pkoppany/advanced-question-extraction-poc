@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { WizardState, WizardStep, ExtractionConfig, AppView } from './types';
+import type { WizardState, WizardStep, ExtractionConfig, AppView, ExtractionResponse } from './types';
 import { UploadStep } from './components/Wizard/UploadStep';
 import { ApproachStep } from './components/Wizard/ApproachStep';
 import { ConfigStep } from './components/Wizard/ConfigStep';
@@ -29,6 +29,12 @@ export default function App() {
     step: 'upload',
     config: initialConfig,
   });
+  
+  // State for viewing historical results
+  const [historicalView, setHistoricalView] = useState<{
+    fileName: string;
+    results: ExtractionResponse;
+  } | null>(null);
 
   const currentStepIndex = STEPS.findIndex((s) => s.key === state.step);
 
@@ -164,6 +170,38 @@ export default function App() {
 
   // Render history view
   if (currentView === 'history') {
+    // If viewing historical results, show the results page
+    if (historicalView) {
+      return (
+        <div className={containerClass}>
+          <header style={{ textAlign: 'center', marginBottom: '2rem', color: 'white' }}>
+            <h1 style={{ fontSize: '1.75rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+              Question Extraction Testing Framework
+            </h1>
+            <p style={{ opacity: 0.8 }}>
+              Viewing Historical Results
+            </p>
+          </header>
+
+          {renderNavigation()}
+
+          <ResultsStep
+            fileId=""
+            fileName={historicalView.fileName}
+            config={initialConfig}
+            results={historicalView.results}
+            onResultsReceived={() => {}}
+            onError={() => {}}
+            onReset={() => {
+              setHistoricalView(null);
+            }}
+            isHistoricalView={true}
+          />
+        </div>
+      );
+    }
+
+    // Show history list
     return (
       <div className={containerClass}>
         <header style={{ textAlign: 'center', marginBottom: '2rem', color: 'white' }}>
@@ -177,7 +215,12 @@ export default function App() {
 
         {renderNavigation()}
 
-        <HistoryPage onBackToWizard={() => setCurrentView('wizard')} />
+        <HistoryPage 
+          onBackToWizard={() => setCurrentView('wizard')}
+          onViewResults={(fileName, results) => {
+            setHistoricalView({ fileName, results });
+          }}
+        />
       </div>
     );
   }

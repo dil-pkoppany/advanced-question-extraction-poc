@@ -56,6 +56,7 @@ export interface ExtractionConfig {
 
 /** A single extracted question */
 export interface ExtractedQuestion {
+  id?: string;
   question_text: string;
   question_type: QuestionType;
   answers?: string[];
@@ -63,6 +64,8 @@ export interface ExtractedQuestion {
   is_valid_question?: boolean;
   row_index?: number;
   sheet_name?: string;
+  is_problematic?: boolean;
+  problematic_comment?: string;
 }
 
 /** Metrics for an extraction run */
@@ -135,6 +138,8 @@ export interface GroundTruthQuestion {
   question_type: QuestionType;
   answers?: string[];
   row_index?: number;
+  is_problematic?: boolean;
+  problematic_comment?: string;
 }
 
 /** A sheet containing validated questions */

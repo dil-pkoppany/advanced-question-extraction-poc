@@ -5,9 +5,10 @@ import type { RunMetadata, ExtractionResponse, ExtractionResult, GroundTruthComp
 
 interface HistoryPageProps {
   onBackToWizard: () => void;
+  onViewResults: (fileName: string, results: ExtractionResponse) => void;
 }
 
-export function HistoryPage({ onBackToWizard }: HistoryPageProps) {
+export function HistoryPage({ onBackToWizard, onViewResults }: HistoryPageProps) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   // Fetch list of runs
@@ -90,6 +91,7 @@ export function HistoryPage({ onBackToWizard }: HistoryPageProps) {
               runId={selectedRunId}
               data={runDetailQuery.data}
               metadata={runsQuery.data?.find((r) => r.run_id === selectedRunId)}
+              onViewResults={onViewResults}
             />
           )}
         </div>
@@ -146,10 +148,12 @@ function RunDetail({
   runId,
   data,
   metadata,
+  onViewResults,
 }: {
   runId: string;
   data: ExtractionResponse;
   metadata?: RunMetadata;
+  onViewResults: (fileName: string, results: ExtractionResponse) => void;
 }) {
   const [activeTab, setActiveTab] = useState<'results' | 'prompts' | 'config' | 'groundtruth'>('results');
   const approachKeys = Object.keys(data.results).sort();
@@ -169,10 +173,19 @@ function RunDetail({
   return (
     <div className="run-detail">
       <div className="run-detail-header">
-        <h2>{fileName || `Run: ${runId.slice(-12)}`}</h2>
-        {fileName && (
-          <span className="run-detail-id">Run ID: {runId.slice(-12)}</span>
-        )}
+        <div>
+          <h2>{fileName || `Run: ${runId.slice(-12)}`}</h2>
+          {fileName && (
+            <span className="run-detail-id">Run ID: {runId.slice(-12)}</span>
+          )}
+        </div>
+        <button 
+          className="btn btn-primary"
+          onClick={() => onViewResults(fileName, data)}
+          style={{ alignSelf: 'flex-start' }}
+        >
+          📊 View Full Results
+        </button>
       </div>
       
       {/* Tabs */}

@@ -215,6 +215,12 @@ class GroundTruthQuestion(BaseModel):
     row_index: int | None = Field(
         None, description="Optional reference to Excel row"
     )
+    is_problematic: bool = Field(
+        default=False, description="Whether this question is marked as problematic"
+    )
+    problematic_comment: str | None = Field(
+        None, description="Optional comment explaining why question is problematic"
+    )
 
     @field_validator("id", "question_text", mode="before")
     @classmethod
@@ -230,6 +236,15 @@ class GroundTruthQuestion(BaseModel):
         """Strip whitespace from answer options."""
         if v is not None:
             return [a.strip() for a in v if a.strip()]
+        return v
+
+    @field_validator("problematic_comment", mode="before")
+    @classmethod
+    def strip_comment(cls, v: str | None) -> str | None:
+        """Strip whitespace from problematic comment."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            return stripped if stripped else None
         return v
 
 

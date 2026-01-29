@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useDropzone } from 'react-dropzone';
 import {
@@ -49,6 +49,9 @@ export function GroundTruthEditor({
     initialFileMetadata || null
   );
   const [error, setError] = useState<string | null>(null);
+  const [showBulkInput, setShowBulkInput] = useState(false);
+  const [bulkQuestionsText, setBulkQuestionsText] = useState('');
+  const [bulkQuestionType, setBulkQuestionType] = useState<QuestionType>('open_ended');
 
   // Upload mutation for extracting file metadata
   const uploadMutation = useMutation({
@@ -131,25 +134,58 @@ export function GroundTruthEditor({
     }
   };
 
+  // Helper function to renumber questions sequentially
+  const renumberQuestions = (questions: GroundTruthQuestion[]): GroundTruthQuestion[] => {
+    return questions.map((q, index) => ({
+      ...q,
+      id: `Q${String(index + 1).padStart(3, '0')}`,
+    }));
+  };
+
+  // Reverse question order and renumber IDs sequentially
+  const reverseQuestionIds = () => {
+    if (sheets.length === 0) return;
+    
+    const currentSheet = sheets[activeSheetIndex];
+    if (currentSheet.questions.length === 0) return;
+    
+    // Reverse the array order and renumber IDs sequentially from 1
+    const reversedAndRenumbered = [...currentSheet.questions]
+      .reverse()
+      .map((q, index) => ({
+        ...q,
+        id: `Q${String(index + 1).padStart(3, '0')}`,
+      }));
+    
+    const updatedSheets = [...sheets];
+    updatedSheets[activeSheetIndex] = {
+      ...currentSheet,
+      questions: reversedAndRenumbered,
+    };
+    setSheets(updatedSheets);
+  };
+
   // Question management - adds new questions at the top for easier UX
   const addQuestion = () => {
     if (sheets.length === 0) return;
     
     const currentSheet = sheets[activeSheetIndex];
-    const nextId = `Q${String(currentSheet.questions.length + 1).padStart(3, '0')}`;
     
     const newQuestion: GroundTruthQuestion = {
-      id: nextId,
+      id: 'Q001', // Will be renumbered
       question_text: '',
       question_type: 'open_ended',
       answers: undefined,
       row_index: undefined,
+      is_problematic: false,
+      problematic_comment: undefined,
     };
     
     const updatedSheets = [...sheets];
+    const newQuestions = renumberQuestions([newQuestion, ...currentSheet.questions]);
     updatedSheets[activeSheetIndex] = {
       ...currentSheet,
-      questions: [newQuestion, ...currentSheet.questions],  // Add at top
+      questions: newQuestions,
     };
     setSheets(updatedSheets);
   };
@@ -172,11 +208,53 @@ export function GroundTruthEditor({
   const removeQuestion = (questionIndex: number) => {
     const updatedSheets = [...sheets];
     const currentSheet = updatedSheets[activeSheetIndex];
+    const filteredQuestions = currentSheet.questions.filter((_, i) => i !== questionIndex);
+    const renumberedQuestions = renumberQuestions(filteredQuestions);
     updatedSheets[activeSheetIndex] = {
       ...currentSheet,
-      questions: currentSheet.questions.filter((_, i) => i !== questionIndex),
+      questions: renumberedQuestions,
     };
     setSheets(updatedSheets);
+  };
+
+  // Bulk question creation
+  const handleBulkCreate = () => {
+    if (sheets.length === 0 || !bulkQuestionsText.trim()) return;
+    
+    const currentSheet = sheets[activeSheetIndex];
+    
+    // Split by double newlines or single newlines, filter empty
+    const questionTexts = bulkQuestionsText
+      .split(/\n\s*\n|\n/)  // Split by double newline or single newline
+      .map(q => q.trim())
+      .filter(q => q.length > 0);
+    
+    if (questionTexts.length === 0) return;
+    
+    // Generate new questions with selected type (IDs will be renumbered)
+    const newQuestions: GroundTruthQuestion[] = questionTexts.map((text) => ({
+      id: 'Q001', // Will be renumbered
+      question_text: text,
+      question_type: bulkQuestionType,
+      answers: undefined,
+      row_index: undefined,
+      is_problematic: false,
+      problematic_comment: undefined,
+    }));
+    
+    // Add questions at the top and renumber all
+    const updatedSheets = [...sheets];
+    const combinedQuestions = renumberQuestions([...newQuestions, ...currentSheet.questions]);
+    updatedSheets[activeSheetIndex] = {
+      ...currentSheet,
+      questions: combinedQuestions,
+    };
+    setSheets(updatedSheets);
+    
+    // Clear the bulk input and hide it
+    setBulkQuestionsText('');
+    setBulkQuestionType('open_ended'); // Reset to default
+    setShowBulkInput(false);
   };
 
   // Calculate total question count
@@ -377,6 +455,13 @@ export function GroundTruthEditor({
             </button>
           </div>
 
+          {/* Summary between tabs and sheet editor */}
+          {sheets.length > 0 && totalQuestions > 0 && (
+            <div className="editor-summary" style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+              <strong>Total Questions:</strong> {totalQuestions} across {sheets.length} sheet(s)
+            </div>
+          )}
+
           {currentSheet && (
             <div className="sheet-editor">
               <div className="sheet-header">
@@ -402,14 +487,98 @@ export function GroundTruthEditor({
               <div className="questions-section">
                 <div className="questions-header">
                   <h4>Questions ({currentSheet.questions.length})</h4>
-                  <button className="btn btn-primary btn-sm" onClick={addQuestion}>
-                    + Add Question
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button className="btn btn-primary btn-sm" onClick={addQuestion}>
+                      + Add Question
+                    </button>
+                    <button 
+                      className="btn btn-secondary btn-sm" 
+                      onClick={() => setShowBulkInput(!showBulkInput)}
+                    >
+                      {showBulkInput ? 'Hide Bulk Input' : '📋 Bulk Add'}
+                    </button>
+                    {currentSheet.questions.length > 0 && (
+                      <button 
+                        className="btn btn-secondary btn-sm" 
+                        onClick={reverseQuestionIds}
+                        title="Reverse the question ID numbering (keeps questions in same order)"
+                      >
+                        🔄 Reverse IDs
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {currentSheet.questions.length === 0 && (
+                {/* Bulk question input */}
+                {showBulkInput && (
+                  <div className="bulk-input-section" style={{ 
+                    marginBottom: '1rem', 
+                    padding: '1rem', 
+                    background: 'var(--bg-light)', 
+                    borderRadius: '8px',
+                    border: '2px dashed var(--border)'
+                  }}>
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label className="form-label" style={{ fontWeight: '600' }}>
+                        Bulk Add Questions
+                      </label>
+                      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                        Paste multiple questions below (one per line or separated by empty lines).
+                      </p>
+                      
+                      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                        <label className="form-label">Question Type (for all questions)</label>
+                        <select
+                          className="form-select"
+                          value={bulkQuestionType}
+                          onChange={(e) => setBulkQuestionType(e.target.value as QuestionType)}
+                          style={{ maxWidth: '250px' }}
+                        >
+                          {QUESTION_TYPES.map((t) => (
+                            <option key={t.value} value={t.value}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Questions</label>
+                        <textarea
+                          className="form-input"
+                          value={bulkQuestionsText}
+                          onChange={(e) => setBulkQuestionsText(e.target.value)}
+                          rows={10}
+                          placeholder="Question 1&#10;&#10;Question 2&#10;&#10;Question 3&#10;..."
+                          style={{ fontFamily: 'inherit' }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                      <button 
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                          setBulkQuestionsText('');
+                          setBulkQuestionType('open_ended');
+                          setShowBulkInput(false);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        className="btn btn-primary btn-sm"
+                        onClick={handleBulkCreate}
+                        disabled={!bulkQuestionsText.trim()}
+                      >
+                        Create {bulkQuestionsText.trim() ? bulkQuestionsText.split(/\n\s*\n|\n/).filter(q => q.trim()).length : ''} Questions
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {currentSheet.questions.length === 0 && !showBulkInput && (
                   <div className="empty-state" style={{ padding: '2rem' }}>
-                    No questions yet. Click "Add Question" to start.
+                    No questions yet. Click "Add Question" or "Bulk Add" to start.
                   </div>
                 )}
 
@@ -426,13 +595,6 @@ export function GroundTruthEditor({
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Summary */}
-      {sheets.length > 0 && (
-        <div className="editor-summary">
-          <strong>Total Questions:</strong> {totalQuestions} across {sheets.length} sheet(s)
         </div>
       )}
     </div>
@@ -453,9 +615,18 @@ function QuestionForm({
     question.answers?.join('\n') || ''
   );
 
+  // Sync answersText with question.answers when it changes externally
+  useEffect(() => {
+    setAnswersText(question.answers?.join('\n') || '');
+  }, [question.answers]);
+
   const handleAnswersChange = (text: string) => {
     setAnswersText(text);
-    const answers = text
+  };
+
+  const handleAnswersBlur = () => {
+    // Only trim and filter when user finishes editing
+    const answers = answersText
       .split('\n')
       .map((a) => a.trim())
       .filter((a) => a.length > 0);
@@ -509,6 +680,32 @@ function QuestionForm({
           />
         </div>
 
+        {/* Problematic question marker in header */}
+        <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '0.5rem', marginBottom: '0.25rem' }}>
+            <input
+              type="checkbox"
+              checked={question.is_problematic || false}
+              onChange={(e) => onChange({ 
+                is_problematic: e.target.checked,
+                problematic_comment: e.target.checked ? question.problematic_comment : undefined
+              })}
+              style={{ cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '0.75rem', fontWeight: '500' }}>Problematic</span>
+          </label>
+          {question.is_problematic && (
+            <input
+              type="text"
+              className="form-input"
+              value={question.problematic_comment || ''}
+              onChange={(e) => onChange({ problematic_comment: e.target.value || undefined })}
+              placeholder="Comment (optional)..."
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+            />
+          )}
+        </div>
+
         <button className="btn btn-danger btn-sm remove-btn" onClick={onRemove}>
           Remove
         </button>
@@ -534,6 +731,7 @@ function QuestionForm({
             className="form-input"
             value={answersText}
             onChange={(e) => handleAnswersChange(e.target.value)}
+            onBlur={handleAnswersBlur}
             rows={3}
             placeholder="Option A&#10;Option B&#10;Option C"
           />

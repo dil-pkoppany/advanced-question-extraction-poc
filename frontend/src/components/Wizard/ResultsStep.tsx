@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, type ReactElement } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { runExtraction, compareWithGroundTruth, getGroundTruthByFilename } from '../../api/client';
-import type { ExtractionConfig, ExtractionResponse, ExtractionResult, ExtractedQuestion, GroundTruthComparisonResult, GroundTruth } from '../../types';
+import { runExtraction, getGroundTruthByFilename } from '../../api/client';
+import type { ExtractionConfig, ExtractionResponse, ExtractionResult, ExtractedQuestion, GroundTruth } from '../../types';
 
 interface ResultsStepProps {
   fileId: string;
@@ -11,6 +11,7 @@ interface ResultsStepProps {
   onResultsReceived: (results: ExtractionResponse) => void;
   onError: (error: string) => void;
   onReset: () => void;
+  isHistoricalView?: boolean;
 }
 
 // Helper function to format result key for display
@@ -42,6 +43,7 @@ export function ResultsStep({
   onResultsReceived,
   onError,
   onReset,
+  isHistoricalView = false,
 }: ResultsStepProps) {
   const [selectedApproach, setSelectedApproach] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'individual' | 'comparison'>('individual');
@@ -61,13 +63,6 @@ export function ResultsStep({
     onError: (error: Error) => {
       onError(error.message || 'Extraction failed');
     },
-  });
-
-  // Ground truth comparison query
-  const groundTruthQuery = useQuery({
-    queryKey: ['groundTruthComparison', fileName, results?.run_id],
-    queryFn: () => compareWithGroundTruth(fileName, results!.results),
-    enabled: !!results && !!fileName,
   });
 
   // Fetch full ground truth data for comparison view
@@ -121,6 +116,19 @@ export function ResultsStep({
       <div className="card-header">
         <span style={{ fontSize: '1.5rem' }}>📊</span>
         <h2>Extraction Results</h2>
+        {fileName && (
+          <span style={{ 
+            fontSize: '0.9rem', 
+            color: 'var(--text-secondary)',
+            fontWeight: '400',
+            marginLeft: '0.5rem',
+            padding: '0.25rem 0.5rem',
+            background: 'var(--bg-light)',
+            borderRadius: '4px'
+          }}>
+            {fileName}
+          </span>
+        )}
         {/* View mode toggle */}
         {canShowComparison && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.25rem' }}>
@@ -177,15 +185,6 @@ export function ResultsStep({
         </div>
       )}
 
-      {/* Ground Truth Comparison */}
-      {groundTruthQuery.data && Object.keys(groundTruthQuery.data).length > 0 && (
-        <GroundTruthComparisonSection 
-          comparisons={groundTruthQuery.data} 
-          approachKeys={approachKeys}
-          results={results.results}
-        />
-      )}
-
       {/* View mode content */}
       {viewMode === 'comparison' && canShowComparison ? (
         <ComparisonView 
@@ -229,7 +228,7 @@ export function ResultsStep({
         }}
       >
         <button className="btn btn-secondary" onClick={onReset}>
-          Start Over
+          {isHistoricalView ? '← Back to History' : 'Start Over'}
         </button>
         <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
           Run ID: {results.run_id}
@@ -378,6 +377,8 @@ function groundTruthToExtractedQuestions(groundTruth: GroundTruth): ExtractedQue
         answers: q.answers,
         sheet_name: sheet.sheet_name,
         row_index: q.row_index,
+        is_problematic: q.is_problematic,
+        problematic_comment: q.problematic_comment,
       });
     }
   }
@@ -408,9 +409,19 @@ function calculateDetailedMetrics(
   answerMatchRate: number;
   overallAccuracy: number;
   matchedCount: number;
+  missedIds: string[];
+  extraIds: string[];
 } {
   if (gtQuestions.length === 0) {
-    return { textMatchRate: 0, typeMatchRate: 0, answerMatchRate: 0, overallAccuracy: 0, matchedCount: 0 };
+    return { 
+      textMatchRate: 0, 
+      typeMatchRate: 0, 
+      answerMatchRate: 0, 
+      overallAccuracy: 0, 
+      matchedCount: 0,
+      missedIds: [],
+      extraIds: []
+    };
   }
 
   let textMatches = 0;
@@ -423,6 +434,23 @@ function calculateDetailedMetrics(
     gtNormalized.set(normalizeText(q.question_text), q);
   }
 
+  const approachNormalized = new Map<string, ExtractedQuestion>();
+  for (const q of approachQuestions) {
+    approachNormalized.set(normalizeText(q.question_text), q);
+  }
+
+  // Track missed IDs (in GT but not in approach)
+  const missedIds: string[] = [];
+  for (const gtQ of gtQuestions) {
+    const normalized = normalizeText(gtQ.question_text);
+    if (!approachNormalized.has(normalized)) {
+      missedIds.push(gtQ.id || `R${gtQ.row_index || '?'}`);
+    }
+  }
+
+  // Track extra IDs (in approach but not in GT)
+  const extraIds: string[] = [];
+  let extraIndex = 1;
   for (const approachQ of approachQuestions) {
     const normalized = normalizeText(approachQ.question_text);
     const gtQ = gtNormalized.get(normalized);
@@ -447,6 +475,10 @@ function calculateDetailedMetrics(
           answerMatches++;
         }
       }
+    } else {
+      // Not in GT - extra
+      // Use ID if available, otherwise row index, otherwise generate temp ID
+      extraIds.push(approachQ.id || (approachQ.row_index ? `R${approachQ.row_index}` : `E${extraIndex++}`));
     }
   }
 
@@ -463,48 +495,23 @@ function calculateDetailedMetrics(
     answerMatchRate,
     overallAccuracy,
     matchedCount: textMatches,
+    missedIds,
+    extraIds,
   };
 }
 
 function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewProps) {
   // State for modal
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  
+  // State for expanded metric cells (showing question IDs)
+  const [expandedMetrics, setExpandedMetrics] = useState<Record<string, boolean>>({});
 
   // Include ground truth as a column
   const allColumnKeys = groundTruth ? ['ground_truth', ...approachKeys] : approachKeys;
 
   // Build a unified list of all questions across approaches
   const comparisonData = useMemo(() => {
-    // Create a map of normalized text -> question data per approach
-    const questionMap = new Map<string, Record<string, ExtractedQuestion | null>>();
-    
-    // Add ground truth questions first (if available)
-    if (groundTruth) {
-      const gtQuestions = groundTruthToExtractedQuestions(groundTruth);
-      for (const question of gtQuestions) {
-        const normalized = normalizeText(question.question_text);
-        if (!questionMap.has(normalized)) {
-          questionMap.set(normalized, {});
-        }
-        questionMap.get(normalized)!['ground_truth'] = question;
-      }
-    }
-    
-    // Collect all questions from all approaches
-    for (const key of approachKeys) {
-      const result = results[key];
-      if (!result.success) continue;
-      
-      for (const question of result.questions) {
-        const normalized = normalizeText(question.question_text);
-        if (!questionMap.has(normalized)) {
-          questionMap.set(normalized, {});
-        }
-        questionMap.get(normalized)![key] = question;
-      }
-    }
-    
-    // Convert to array and sort by first appearance
     const rows: Array<{
       id: string;
       questions: Record<string, ExtractedQuestion | null>;
@@ -512,30 +519,187 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
       hasDifferences: boolean;
       inGroundTruth: boolean;
       missingFromGroundTruth: boolean;
+      gtDuplicateRows: number[]; // Other row numbers with same GT question text
     }> = [];
     
-    for (const [normalized, questions] of questionMap) {
-      const presentIn = allColumnKeys.filter(k => questions[k]);
-      const isUnique = presentIn.length === 1;
-      const inGroundTruth = !!questions['ground_truth'];
-      const missingFromGroundTruth = groundTruth && !inGroundTruth;
+    // Track which approach questions have been matched (to find extras)
+    const matchedApproachQuestions: Record<string, Set<number>> = {};
+    for (const key of approachKeys) {
+      matchedApproachQuestions[key] = new Set();
+    }
+    
+    // Track GT duplicates: normalized text -> list of row indices (0-based)
+    const gtTextToRowIndices = new Map<string, number[]>();
+    
+    // If we have ground truth, create one row per GT question (no deduplication!)
+    if (groundTruth) {
+      const gtQuestions = groundTruthToExtractedQuestions(groundTruth);
       
-      // Check for type differences
-      const types = new Set(
-        Object.values(questions)
-          .filter(Boolean)
-          .map(q => q!.question_type)
-      );
-      const hasDifferences = isUnique || types.size > 1;
+      // First pass: build the duplicate map
+      for (let gtIndex = 0; gtIndex < gtQuestions.length; gtIndex++) {
+        const gtNormalized = normalizeText(gtQuestions[gtIndex].question_text);
+        if (!gtTextToRowIndices.has(gtNormalized)) {
+          gtTextToRowIndices.set(gtNormalized, []);
+        }
+        gtTextToRowIndices.get(gtNormalized)!.push(gtIndex);
+      }
       
-      rows.push({
-        id: normalized,
-        questions,
-        isUnique,
-        hasDifferences,
-        inGroundTruth,
-        missingFromGroundTruth: !!missingFromGroundTruth,
-      });
+      for (let gtIndex = 0; gtIndex < gtQuestions.length; gtIndex++) {
+        const gtQuestion = gtQuestions[gtIndex];
+        const gtNormalized = normalizeText(gtQuestion.question_text);
+        
+        const rowQuestions: Record<string, ExtractedQuestion | null> = {
+          'ground_truth': gtQuestion
+        };
+        
+        // Find matching questions from each approach
+        for (const key of approachKeys) {
+          const result = results[key];
+          if (!result.success) {
+            rowQuestions[key] = null;
+            continue;
+          }
+          
+          // Find first unmatched question with same normalized text
+          let matchedIndex = -1;
+          for (let i = 0; i < result.questions.length; i++) {
+            if (matchedApproachQuestions[key].has(i)) continue;
+            
+            const approachNormalized = normalizeText(result.questions[i].question_text);
+            if (approachNormalized === gtNormalized) {
+              matchedIndex = i;
+              break;
+            }
+          }
+          
+          if (matchedIndex >= 0) {
+            rowQuestions[key] = result.questions[matchedIndex];
+            matchedApproachQuestions[key].add(matchedIndex);
+          } else {
+            rowQuestions[key] = null;
+          }
+        }
+        
+        // Check for type differences among matched questions
+        const matchedQuestions = Object.values(rowQuestions).filter(Boolean);
+        const types = new Set(matchedQuestions.map(q => q!.question_type));
+        const hasDifferences = types.size > 1;
+        
+        // isUnique means only one approach has this question
+        const presentIn = allColumnKeys.filter(k => rowQuestions[k]);
+        const isUnique = presentIn.length === 1;
+        
+        // Get duplicate row numbers (excluding self, convert to 1-based)
+        const duplicateIndices = gtTextToRowIndices.get(gtNormalized) || [];
+        const gtDuplicateRows = duplicateIndices
+          .filter(idx => idx !== gtIndex)
+          .map(idx => idx + 1); // Convert to 1-based row numbers
+        
+        rows.push({
+          id: `gt-${gtIndex}`,
+          questions: rowQuestions,
+          isUnique,
+          hasDifferences,
+          inGroundTruth: true,
+          missingFromGroundTruth: false,
+          gtDuplicateRows,
+        });
+      }
+    }
+    
+    // Add any unmatched approach questions (extras not in ground truth)
+    for (const key of approachKeys) {
+      const result = results[key];
+      if (!result.success) continue;
+      
+      for (let i = 0; i < result.questions.length; i++) {
+        if (matchedApproachQuestions[key].has(i)) continue;
+        
+        const extraQuestion = result.questions[i];
+        const extraNormalized = normalizeText(extraQuestion.question_text);
+        
+        // Check if this extra question already exists in rows (from another approach's extras)
+        let existingRowIndex = -1;
+        for (let r = 0; r < rows.length; r++) {
+          if (rows[r].inGroundTruth) continue; // Skip GT rows
+          // Check if any approach in this row has the same normalized text
+          for (const approachKey of approachKeys) {
+            const q = rows[r].questions[approachKey];
+            if (q && normalizeText(q.question_text) === extraNormalized) {
+              existingRowIndex = r;
+              break;
+            }
+          }
+          if (existingRowIndex >= 0) break;
+        }
+        
+        if (existingRowIndex >= 0) {
+          // Add to existing extra row
+          rows[existingRowIndex].questions[key] = extraQuestion;
+          // Update isUnique
+          const presentIn = allColumnKeys.filter(k => rows[existingRowIndex].questions[k]);
+          rows[existingRowIndex].isUnique = presentIn.length === 1;
+        } else {
+          // Create new extra row
+          const rowQuestions: Record<string, ExtractedQuestion | null> = {
+            'ground_truth': null
+          };
+          for (const k of approachKeys) {
+            rowQuestions[k] = k === key ? extraQuestion : null;
+          }
+          
+          rows.push({
+            id: `extra-${key}-${i}`,
+            questions: rowQuestions,
+            isUnique: true,
+            hasDifferences: false,
+            inGroundTruth: false,
+            missingFromGroundTruth: true,
+            gtDuplicateRows: [],
+          });
+        }
+      }
+    }
+    
+    // If no ground truth, just show all approach questions (with dedup for comparison)
+    if (!groundTruth) {
+      const questionMap = new Map<string, Record<string, ExtractedQuestion | null>>();
+      
+      for (const key of approachKeys) {
+        const result = results[key];
+        if (!result.success) continue;
+        
+        for (const question of result.questions) {
+          const normalized = normalizeText(question.question_text);
+          if (!questionMap.has(normalized)) {
+            questionMap.set(normalized, {});
+          }
+          questionMap.get(normalized)![key] = question;
+        }
+      }
+      
+      let index = 0;
+      for (const [, questions] of questionMap) {
+        const presentIn = approachKeys.filter(k => questions[k]);
+        const isUnique = presentIn.length === 1;
+        
+        const types = new Set(
+          Object.values(questions)
+            .filter(Boolean)
+            .map(q => q!.question_type)
+        );
+        const hasDifferences = isUnique || types.size > 1;
+        
+        rows.push({
+          id: `q-${index++}`,
+          questions,
+          isUnique,
+          hasDifferences,
+          inGroundTruth: false,
+          missingFromGroundTruth: false,
+          gtDuplicateRows: [],
+        });
+      }
     }
     
     return rows;
@@ -549,21 +713,56 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
   const missingFromGT = comparisonData.filter(r => r.missingFromGroundTruth).length;
 
   // Calculate detailed metrics per approach (against ground truth)
+  // Uses comparisonData to get correct row numbers that match the table
   const detailedMetrics = useMemo(() => {
     if (!groundTruth) return {};
     
     const gtQuestions = groundTruthToExtractedQuestions(groundTruth);
-    const metrics: Record<string, ReturnType<typeof calculateDetailedMetrics>> = {};
+    const metrics: Record<string, {
+      textMatchRate: number;
+      typeMatchRate: number;
+      answerMatchRate: number;
+      overallAccuracy: number;
+      matchedCount: number;
+      missedRowNumbers: number[];
+      extraRowNumbers: number[];
+    }> = {};
     
     for (const key of approachKeys) {
       const result = results[key];
-      if (result.success) {
-        metrics[key] = calculateDetailedMetrics(result.questions, gtQuestions);
-      }
+      if (!result.success) continue;
+      
+      // Get basic metrics from the calculation function
+      const baseMetrics = calculateDetailedMetrics(result.questions, gtQuestions);
+      
+      // Calculate missed row numbers (GT questions not found by this approach)
+      // These are rows where ground_truth exists but this approach doesn't have the question
+      const missedRowNumbers: number[] = [];
+      const extraRowNumbers: number[] = [];
+      
+      comparisonData.forEach((row, index) => {
+        const rowNumber = index + 1; // 1-based row number
+        const hasGT = !!row.questions['ground_truth'];
+        const hasApproach = !!row.questions[key];
+        
+        if (hasGT && !hasApproach) {
+          // Missed: in ground truth but not extracted by this approach
+          missedRowNumbers.push(rowNumber);
+        } else if (!hasGT && hasApproach) {
+          // Extra: extracted by this approach but not in ground truth
+          extraRowNumbers.push(rowNumber);
+        }
+      });
+      
+      metrics[key] = {
+        ...baseMetrics,
+        missedRowNumbers,
+        extraRowNumbers,
+      };
     }
     
     return metrics;
-  }, [groundTruth, results, approachKeys]);
+  }, [groundTruth, results, approachKeys, comparisonData]);
 
   return (
     <div>
@@ -759,9 +958,228 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
                   </div>
                 );
               })}
+
+              {/* Missed Questions */}
+              <div style={{ background: 'white', padding: '0.5rem', fontWeight: '500', color: 'var(--error)' }}>Missed</div>
+              <div style={{ background: 'white', padding: '0.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                0
+              </div>
+              {approachKeys.map(key => {
+                const metrics = detailedMetrics[key];
+                const missedCount = metrics?.missedRowNumbers.length ?? 0;
+                const expandKey = `missed-${key}`;
+                const isExpanded = expandedMetrics[expandKey];
+                
+                return (
+                  <div 
+                    key={key}
+                    style={{ 
+                      background: missedCount > 0 ? 'rgba(245, 101, 101, 0.1)' : 'white', 
+                      padding: '0.5rem', 
+                      textAlign: 'center',
+                      color: missedCount > 0 ? 'var(--error)' : 'var(--text-secondary)',
+                      fontWeight: missedCount > 0 ? '600' : 'normal',
+                      cursor: missedCount > 0 ? 'pointer' : 'default',
+                      transition: 'background 0.15s'
+                    }}
+                    onClick={() => {
+                      if (missedCount > 0) {
+                        setExpandedMetrics(prev => ({
+                          ...prev,
+                          [expandKey]: !prev[expandKey]
+                        }));
+                      }
+                    }}
+                    onMouseEnter={(e) => {
+                      if (missedCount > 0) {
+                        e.currentTarget.style.background = 'rgba(245, 101, 101, 0.2)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (missedCount > 0) {
+                        e.currentTarget.style.background = 'rgba(245, 101, 101, 0.1)';
+                      }
+                    }}
+                    title={missedCount > 0 ? 'Click to see row numbers' : undefined}
+                  >
+                    {missedCount}
+                    {missedCount > 0 && (
+                      <span style={{ marginLeft: '0.25rem', fontSize: '0.75rem' }}>
+                        {isExpanded ? '▼' : '▶'}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Extra Questions */}
+              <div style={{ background: 'white', padding: '0.5rem', fontWeight: '500', color: 'var(--error)' }}>Extra</div>
+              <div style={{ background: 'white', padding: '0.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                0
+              </div>
+              {approachKeys.map(key => {
+                const metrics = detailedMetrics[key];
+                const extraCount = metrics?.extraRowNumbers.length ?? 0;
+                const expandKey = `extra-${key}`;
+                const isExpanded = expandedMetrics[expandKey];
+                
+                return (
+                  <div 
+                    key={key}
+                    style={{ 
+                      background: extraCount > 0 ? 'rgba(245, 101, 101, 0.1)' : 'white', 
+                      padding: '0.5rem', 
+                      textAlign: 'center',
+                      color: extraCount > 0 ? 'var(--error)' : 'var(--text-secondary)',
+                      fontWeight: extraCount > 0 ? '600' : 'normal',
+                      cursor: extraCount > 0 ? 'pointer' : 'default',
+                      transition: 'background 0.15s'
+                    }}
+                    onClick={() => {
+                      if (extraCount > 0) {
+                        setExpandedMetrics(prev => ({
+                          ...prev,
+                          [expandKey]: !prev[expandKey]
+                        }));
+                      }
+                    }}
+                    onMouseEnter={(e) => {
+                      if (extraCount > 0) {
+                        e.currentTarget.style.background = 'rgba(245, 101, 101, 0.2)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (extraCount > 0) {
+                        e.currentTarget.style.background = 'rgba(245, 101, 101, 0.1)';
+                      }
+                    }}
+                    title={extraCount > 0 ? 'Click to see row numbers' : undefined}
+                  >
+                    {extraCount}
+                    {extraCount > 0 && (
+                      <span style={{ marginLeft: '0.25rem', fontSize: '0.75rem' }}>
+                        {isExpanded ? '▼' : '▶'}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </>
           )}
         </div>
+
+        {/* Expanded Question Row Numbers Display */}
+        {groundTruth && Object.keys(expandedMetrics).some(key => expandedMetrics[key]) && (
+          <div style={{ marginTop: '1rem' }}>
+            {approachKeys.map(key => {
+              const metrics = detailedMetrics[key];
+              const missedExpanded = expandedMetrics[`missed-${key}`];
+              const extraExpanded = expandedMetrics[`extra-${key}`];
+              
+              if (!missedExpanded && !extraExpanded) return null;
+              
+              return (
+                <div key={key} style={{ marginBottom: '1rem' }}>
+                  <div style={{ 
+                    fontSize: '0.875rem', 
+                    fontWeight: '600', 
+                    marginBottom: '0.5rem',
+                    color: 'var(--primary)'
+                  }}>
+                    {formatResultKey(key, results[key])}
+                  </div>
+                  
+                  {missedExpanded && metrics && metrics.missedRowNumbers.length > 0 && (
+                    <div style={{
+                      background: 'rgba(245, 101, 101, 0.05)',
+                      border: '1px solid rgba(245, 101, 101, 0.2)',
+                      borderRadius: '6px',
+                      padding: '0.75rem',
+                      marginBottom: '0.5rem'
+                    }}>
+                      <div style={{ 
+                        fontSize: '0.75rem', 
+                        fontWeight: '600', 
+                        color: 'var(--error)',
+                        marginBottom: '0.5rem',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em'
+                      }}>
+                        Missed Questions - Table Row # ({metrics.missedRowNumbers.length})
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '0.375rem'
+                      }}>
+                        {metrics.missedRowNumbers.map(rowNum => (
+                          <span 
+                            key={rowNum}
+                            style={{
+                              background: 'var(--error)',
+                              color: 'white',
+                              padding: '0.25rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.75rem',
+                              fontWeight: '600',
+                              cursor: 'help'
+                            }}
+                            title={`See row ${rowNum} in the table below`}
+                          >
+                            #{rowNum}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {extraExpanded && metrics && metrics.extraRowNumbers.length > 0 && (
+                    <div style={{
+                      background: 'rgba(245, 101, 101, 0.05)',
+                      border: '1px solid rgba(245, 101, 101, 0.2)',
+                      borderRadius: '6px',
+                      padding: '0.75rem'
+                    }}>
+                      <div style={{ 
+                        fontSize: '0.75rem', 
+                        fontWeight: '600', 
+                        color: 'var(--error)',
+                        marginBottom: '0.5rem',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em'
+                      }}>
+                        Extra Questions - Table Row # ({metrics.extraRowNumbers.length})
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '0.375rem'
+                      }}>
+                        {metrics.extraRowNumbers.map(rowNum => (
+                          <span 
+                            key={rowNum}
+                            style={{
+                              background: 'var(--error)',
+                              color: 'white',
+                              padding: '0.25rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.75rem',
+                              fontWeight: '600',
+                              cursor: 'help'
+                            }}
+                            title={`See row ${rowNum} in the table below`}
+                          >
+                            #{rowNum}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
         
         {/* Legend for color coding */}
         {groundTruth && (
@@ -997,33 +1415,65 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
               {/* Ground Truth column */}
               {groundTruth && (() => {
                 const question = gtQuestion;
+                const duplicateRows = row.gtDuplicateRows;
                 return (
                   <div 
                     style={{ 
                       padding: '0.5rem',
                       fontSize: '0.8125rem',
                       borderLeft: '1px solid var(--border)',
-                      background: question ? 'white' : 'var(--bg-light)',
+                      background: question ? (duplicateRows.length > 0 ? 'rgba(237, 137, 54, 0.1)' : 'white') : 'var(--bg-light)',
                       cursor: question ? 'help' : 'default'
                     }}
                     title={question ? question.question_text : 'Not in ground truth'}
                   >
-                    {question ? (
-                      <>
-                        <div style={{ marginBottom: '0.25rem', lineHeight: '1.4' }}>
-                          {question.question_text.length > 200 
-                            ? question.question_text.substring(0, 200) + '...'
-                            : question.question_text}
-                        </div>
+                  {question ? (
+                    <>
+                      <div style={{ marginBottom: '0.25rem', lineHeight: '1.4' }}>
+                        {question.question_text.length > 200 
+                          ? question.question_text.substring(0, 200) + '...'
+                          : question.question_text}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                         <span className="question-type" style={{ fontSize: '0.6875rem' }}>
                           {question.question_type}
                         </span>
-                      </>
-                    ) : (
-                      <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                        Not in GT
-                      </span>
-                    )}
+                        {duplicateRows.length > 0 && (
+                          <span 
+                            style={{ 
+                              fontSize: '0.625rem',
+                              background: 'var(--warning)',
+                              color: 'white',
+                              padding: '0.125rem 0.375rem',
+                              borderRadius: '3px',
+                              fontWeight: '600',
+                              cursor: 'help'
+                            }}
+                            title={`Duplicate question - same text as row${duplicateRows.length > 1 ? 's' : ''}: ${duplicateRows.map(r => '#' + r).join(', ')}`}
+                          >
+                            DUP #{duplicateRows.join(', #')}
+                          </span>
+                        )}
+                        {question.is_problematic && (
+                          <span 
+                            style={{ 
+                              fontSize: '0.6875rem',
+                              color: 'var(--error)',
+                              fontWeight: '600',
+                              cursor: question.problematic_comment ? 'help' : 'default'
+                            }}
+                            title={question.problematic_comment || 'Marked as problematic'}
+                          >
+                            ⚠️ Problematic
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                      Not in GT
+                    </span>
+                  )}
                   </div>
                 );
               })()}
@@ -1031,19 +1481,107 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
                 const question = row.questions[key];
                 const cellStyle = getCellStyle(key);
                 
-                // Determine what icons/indicators to show
-                let indicator = null;
-                if (groundTruth && question) {
-                  if (!gtQuestion) {
-                    indicator = <span style={{ color: 'var(--error)', marginLeft: '0.5rem' }} title="Extra (not in GT)">✗</span>;
-                  } else {
-                    const typeMatch = question.question_type === gtQuestion.question_type;
-                    if (!typeMatch) {
-                      indicator = <span style={{ color: 'var(--warning)', marginLeft: '0.5rem' }} title={`Type differs: expected ${gtQuestion.question_type}`}>◐</span>;
+                // Determine difference indicators/badges
+                const badges: ReactElement[] = [];
+                if (groundTruth && question && gtQuestion) {
+                  // Check text match
+                  const textMatch = normalizeText(question.question_text) === normalizeText(gtQuestion.question_text);
+                  if (!textMatch) {
+                    badges.push(
+                      <span 
+                        key="text-diff"
+                        style={{ 
+                          fontSize: '0.625rem',
+                          background: 'var(--error)',
+                          color: 'white',
+                          padding: '0.125rem 0.375rem',
+                          borderRadius: '3px',
+                          marginLeft: '0.25rem',
+                          fontWeight: '600',
+                          display: 'inline-block',
+                          lineHeight: '1.2'
+                        }}
+                        title="Question text differs from ground truth"
+                      >
+                        TEXT
+                      </span>
+                    );
+                  }
+                  
+                  // Check type match
+                  const typeMatch = question.question_type === gtQuestion.question_type;
+                  if (!typeMatch) {
+                    badges.push(
+                      <span 
+                        key="type-diff"
+                        style={{ 
+                          fontSize: '0.625rem',
+                          background: 'var(--warning)',
+                          color: 'white',
+                          padding: '0.125rem 0.375rem',
+                          borderRadius: '3px',
+                          marginLeft: '0.25rem',
+                          fontWeight: '600',
+                          display: 'inline-block',
+                          lineHeight: '1.2'
+                        }}
+                        title={`Type differs: got ${question.question_type}, expected ${gtQuestion.question_type}`}
+                      >
+                        TYPE
+                      </span>
+                    );
+                  }
+                  
+                  // Check answer match
+                  if (gtQuestion.answers && gtQuestion.answers.length > 0) {
+                    const gtAnswers = new Set(gtQuestion.answers.map(a => a.toLowerCase().trim()));
+                    const approachAnswers = new Set((question.answers || []).map(a => a.toLowerCase().trim()));
+                    const answerMatch = gtAnswers.size === approachAnswers.size && 
+                      [...gtAnswers].every(a => approachAnswers.has(a));
+                    
+                    if (!answerMatch) {
+                      badges.push(
+                        <span 
+                          key="answer-diff"
+                          style={{ 
+                            fontSize: '0.625rem',
+                            background: 'var(--warning)',
+                            color: 'white',
+                            padding: '0.125rem 0.375rem',
+                            borderRadius: '3px',
+                            marginLeft: '0.25rem',
+                            fontWeight: '600',
+                            display: 'inline-block',
+                            lineHeight: '1.2'
+                          }}
+                          title="Answer options differ from ground truth"
+                        >
+                          ANSWERS
+                        </span>
+                      );
                     }
                   }
-                } else if (groundTruth && !question && gtQuestion) {
-                  indicator = null; // Missing is shown differently
+                } else if (groundTruth && question && !gtQuestion) {
+                  // Extra question not in GT
+                  badges.push(
+                    <span 
+                      key="extra"
+                      style={{ 
+                        fontSize: '0.625rem',
+                        background: 'var(--error)',
+                        color: 'white',
+                        padding: '0.125rem 0.375rem',
+                        borderRadius: '3px',
+                        marginLeft: '0.25rem',
+                        fontWeight: '600',
+                        display: 'inline-block',
+                        lineHeight: '1.2'
+                      }}
+                      title="Extra question not in ground truth"
+                    >
+                      EXTRA
+                    </span>
+                  );
                 }
                 
                 return (
@@ -1065,22 +1603,24 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
                             ? question.question_text.substring(0, 200) + '...'
                             : question.question_text}
                         </div>
-                        <span className="question-type" style={{ fontSize: '0.6875rem' }}>
-                          {question.question_type}
-                        </span>
-                        {indicator}
-                        {question.confidence !== undefined && (
-                          <span 
-                            style={{ 
-                              marginLeft: '0.5rem', 
-                              fontSize: '0.6875rem',
-                              color: question.confidence >= 0.7 ? 'var(--success)' : 'var(--warning)'
-                            }}
-                            title={`Confidence: ${(question.confidence * 100).toFixed(1)}%`}
-                          >
-                            {(question.confidence * 100).toFixed(0)}%
+                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.25rem' }}>
+                          <span className="question-type" style={{ fontSize: '0.6875rem' }}>
+                            {question.question_type}
                           </span>
-                        )}
+                          {badges}
+                          {question.confidence !== undefined && (
+                            <span 
+                              style={{ 
+                                marginLeft: '0.25rem', 
+                                fontSize: '0.6875rem',
+                                color: question.confidence >= 0.7 ? 'var(--success)' : 'var(--warning)'
+                              }}
+                              title={`Confidence: ${(question.confidence * 100).toFixed(1)}%`}
+                            >
+                              {(question.confidence * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
                       </>
                     ) : (
                       <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
@@ -1212,6 +1752,19 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
                   In Ground Truth
                 </span>
               )}
+              {groundTruth && row.questions['ground_truth']?.is_problematic && (
+                <span style={{ 
+                  marginLeft: '0.75rem', 
+                  fontSize: '0.75rem', 
+                  background: 'var(--error)', 
+                  color: 'white',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  fontWeight: '500'
+                }}>
+                  ⚠️ Problematic
+                </span>
+              )}
               {!row.missingFromGroundTruth && row.isUnique && (
                 <span style={{ 
                   marginLeft: '0.75rem', 
@@ -1341,6 +1894,35 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
                             <li key={i} style={{ marginBottom: '0.25rem' }}>{answer}</li>
                           ))}
                         </ul>
+                      </div>
+                    )}
+
+                    {/* Problematic indicator */}
+                    {question.is_problematic && (
+                      <div style={{ 
+                        marginBottom: '1rem',
+                        padding: '0.75rem',
+                        background: 'rgba(245, 101, 101, 0.1)',
+                        borderLeft: '3px solid var(--error)',
+                        borderRadius: '4px',
+                      }}>
+                        <div style={{ 
+                          fontSize: '0.75rem', 
+                          fontWeight: '600', 
+                          color: 'var(--error)',
+                          marginBottom: question.problematic_comment ? '0.5rem' : 0,
+                        }}>
+                          ⚠️ MARKED AS PROBLEMATIC
+                        </div>
+                        {question.problematic_comment && (
+                          <div style={{ 
+                            fontSize: '0.8125rem',
+                            color: 'var(--text-primary)',
+                            lineHeight: '1.5',
+                          }}>
+                            {question.problematic_comment}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1532,169 +2114,3 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
   );
 }
 
-/** Ground Truth Comparison Section */
-function GroundTruthComparisonSection({
-  comparisons,
-  approachKeys,
-  results,
-}: {
-  comparisons: Record<string, GroundTruthComparisonResult>;
-  approachKeys: string[];
-  results: Record<string, ExtractionResult>;
-}) {
-  const firstComparison = Object.values(comparisons)[0];
-  if (!firstComparison) return null;
-
-  return (
-    <div className="ground-truth-comparison-section">
-      <h3>
-        <span style={{ marginRight: '0.5rem' }}>🎯</span>
-        Ground Truth Comparison
-      </h3>
-      <p className="gt-comparison-subtitle">
-        Comparing against: <strong>{firstComparison.ground_truth_file_name}</strong>
-      </p>
-
-      {/* Metrics Grid */}
-      <div className="gt-comparison-grid" style={{
-        display: 'grid',
-        gridTemplateColumns: `150px repeat(${approachKeys.length}, 1fr)`,
-        gap: '1px',
-        background: 'var(--border)',
-        border: '1px solid var(--border)',
-        borderRadius: '8px',
-        overflow: 'hidden',
-        marginBottom: '1rem',
-      }}>
-        {/* Header */}
-        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '600' }}>
-          Metric
-        </div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ 
-            background: 'var(--bg-light)', 
-            padding: '0.75rem', 
-            fontWeight: '500', 
-            textAlign: 'center',
-            fontSize: '0.85rem'
-          }}>
-            {formatResultKey(key, results[key])}
-          </div>
-        ))}
-
-        {/* Ground Truth Count */}
-        <div style={{ background: 'white', padding: '0.75rem' }}>Ground Truth</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
-            {comparisons[key]?.ground_truth_count ?? '-'}
-          </div>
-        ))}
-
-        {/* Extracted Count */}
-        <div style={{ background: 'white', padding: '0.75rem' }}>Extracted</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
-            {comparisons[key]?.extracted_count ?? '-'}
-          </div>
-        ))}
-
-        {/* Exact Matches */}
-        <div style={{ background: 'white', padding: '0.75rem' }}>Exact Matches</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ 
-            background: 'white', 
-            padding: '0.75rem', 
-            textAlign: 'center',
-            color: comparisons[key]?.exact_matches ? 'var(--success)' : 'inherit',
-            fontWeight: comparisons[key]?.exact_matches ? '600' : 'normal'
-          }}>
-            {comparisons[key]?.exact_matches ?? '-'}
-          </div>
-        ))}
-
-        {/* Fuzzy Matches */}
-        <div style={{ background: 'white', padding: '0.75rem' }}>Fuzzy Matches</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
-            {comparisons[key]?.fuzzy_matches ?? '-'}
-          </div>
-        ))}
-
-        {/* Missed */}
-        <div style={{ background: 'white', padding: '0.75rem' }}>Missed</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ 
-            background: 'white', 
-            padding: '0.75rem', 
-            textAlign: 'center',
-            color: comparisons[key]?.missed_questions ? 'var(--error)' : 'inherit'
-          }}>
-            {comparisons[key]?.missed_questions ?? '-'}
-          </div>
-        ))}
-
-        {/* Extra */}
-        <div style={{ background: 'white', padding: '0.75rem' }}>Extra</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ background: 'white', padding: '0.75rem', textAlign: 'center' }}>
-            {comparisons[key]?.extra_questions ?? '-'}
-          </div>
-        ))}
-
-        {/* Precision */}
-        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '500' }}>Precision</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ 
-            background: 'var(--bg-light)', 
-            padding: '0.75rem', 
-            textAlign: 'center',
-            fontWeight: '600'
-          }}>
-            {comparisons[key] ? `${(comparisons[key].precision * 100).toFixed(1)}%` : '-'}
-          </div>
-        ))}
-
-        {/* Recall */}
-        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '500' }}>Recall</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ 
-            background: 'var(--bg-light)', 
-            padding: '0.75rem', 
-            textAlign: 'center',
-            fontWeight: '600'
-          }}>
-            {comparisons[key] ? `${(comparisons[key].recall * 100).toFixed(1)}%` : '-'}
-          </div>
-        ))}
-
-        {/* F1 Score */}
-        <div style={{ background: 'var(--bg-light)', padding: '0.75rem', fontWeight: '500' }}>F1 Score</div>
-        {approachKeys.map((key) => (
-          <div key={key} style={{ 
-            background: 'var(--bg-light)', 
-            padding: '0.75rem', 
-            textAlign: 'center',
-            fontWeight: '600',
-            color: comparisons[key]?.f1_score >= 0.8 ? 'var(--success)' : 
-                   comparisons[key]?.f1_score >= 0.5 ? 'var(--warning)' : 'var(--error)'
-          }}>
-            {comparisons[key] ? `${(comparisons[key].f1_score * 100).toFixed(1)}%` : '-'}
-          </div>
-        ))}
-      </div>
-
-      {/* Legend */}
-      <div style={{ 
-        fontSize: '0.75rem', 
-        color: 'var(--text-secondary)',
-        display: 'flex',
-        gap: '1.5rem',
-        flexWrap: 'wrap'
-      }}>
-        <span><strong>Precision</strong> = matches / extracted</span>
-        <span><strong>Recall</strong> = matches / ground truth</span>
-        <span><strong>F1</strong> = harmonic mean of precision &amp; recall</span>
-      </div>
-    </div>
-  );
-}

@@ -532,6 +532,10 @@ body {
 
 .run-detail-header {
   margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
 }
 
 .run-detail-header h2 {
