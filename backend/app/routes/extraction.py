@@ -81,7 +81,7 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
                 model_name = "opus-4.5"
             else:
                 model_id = settings.bedrock_sonnet_model_id
-                model_name = "sonnet-4"
+                model_name = "sonnet-4.5"
             
             try:
                 if approach == 1:

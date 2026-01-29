@@ -42,7 +42,7 @@ export interface UploadResponse {
 }
 
 /** Available LLM models */
-export type ModelType = 'opus-4.5' | 'sonnet-4';
+export type ModelType = 'opus-4.5' | 'sonnet-4.5';
 
 /** Extraction configuration */
 export interface ExtractionConfig {

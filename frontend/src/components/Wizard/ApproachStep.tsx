@@ -45,7 +45,7 @@ export function ApproachStep({
     onConfigChange({ ...config, run_all_approaches: runAll });
   };
 
-  const handleModelChange = (model: 'opus-4.5' | 'sonnet-4') => {
+  const handleModelChange = (model: 'opus-4.5' | 'sonnet-4.5') => {
     onConfigChange({ ...config, model });
   };
 
@@ -98,15 +98,15 @@ export function ApproachStep({
               <p>Most capable model with highest accuracy. Supports up to 24K output tokens.</p>
             </div>
           </label>
-          <label className={`radio-option ${config.model === 'sonnet-4' ? 'selected' : ''}`}>
+          <label className={`radio-option ${config.model === 'sonnet-4.5' ? 'selected' : ''}`}>
             <input
               type="radio"
               name="model"
-              checked={config.model === 'sonnet-4'}
-              onChange={() => handleModelChange('sonnet-4')}
+              checked={config.model === 'sonnet-4.5'}
+              onChange={() => handleModelChange('sonnet-4.5')}
             />
             <div className="radio-option-content">
-              <h4>Claude Sonnet 4</h4>
+              <h4>Claude Sonnet 4.5</h4>
               <p>Balanced performance and speed. Good for most use cases.</p>
             </div>
           </label>

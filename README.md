@@ -28,7 +28,7 @@ flowchart LR
 
     subgraph llm [AWS Bedrock]
         Opus[Claude Opus 4.5]
-        Sonnet[Claude Sonnet 4]
+        Sonnet[Claude Sonnet 4.5]
         Haiku[Claude Haiku]
     end
 

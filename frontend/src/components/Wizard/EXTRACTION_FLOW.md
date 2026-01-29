@@ -48,7 +48,7 @@ uploadFile(file: File) → UploadResponse
 | Approach 1 | Fully automatic - no config needed |
 | Approach 2 | User-guided with column mappings |
 | Approach 3 | Deterministic parsing + LLM judge |
-| Model | Opus 4.5 (default) or Sonnet 4 |
+| Model | Opus 4.5 (default) or Sonnet 4.5 |
 | Compare Models | Run with both models side-by-side |
 | Run All | Execute all 3 approaches |
 
@@ -100,7 +100,6 @@ uploadFile(file: File) → UploadResponse
 ```typescript
 runExtraction(fileId: string, config: ExtractionConfig) → ExtractionResponse
 getGroundTruthByFilename(fileName: string) → GroundTruth | null
-compareWithGroundTruth(fileName: string, results) → Record<string, GroundTruthComparisonResult>
 ```
 
 **View Modes**:
@@ -122,17 +121,30 @@ The comparison view is shown automatically when:
 
 **Ground Truth Metrics** (when available):
 - Ground truth shown as first column in comparison
+- Filename displayed next to "Extraction Results" header
 - **Count**: Green if matches GT count exactly
 - **Time**: No color (not comparable to GT)
 - **Text Match**: % of GT questions found (green ≥90%, orange 70-89%, red <70%)
 - **Type Match**: % of matched questions with correct type
 - **Answer Match**: % of matched questions with correct answers
 - **Overall**: Weighted accuracy (50% text, 30% type, 20% answers)
+- **Missed**: Count of GT questions not extracted (click to see row numbers)
+- **Extra**: Count of extracted questions not in GT (click to see row numbers)
 
 **Question Row Coloring** (per-cell, against GT):
 - **Green border**: Perfect match (text, type, and answers)
 - **Orange border**: Partial match (text matches, type or answers differ)
 - **Red border**: Missing from GT or Extra (not in GT)
+
+**Inline Difference Badges** (in approach columns):
+- `TEXT` (red): Question text differs from ground truth
+- `TYPE` (orange): Question type doesn't match
+- `ANSWERS` (orange): Answer options differ
+- `EXTRA` (red): Question not in ground truth
+
+**Duplicate Detection** (in ground truth column):
+- `DUP #X` (orange): Shows which other rows have identical question text
+- Helps identify duplicate questions in ground truth data
 
 **Comparison Winners** (when multiple approaches):
 - Most questions extracted
@@ -189,7 +201,17 @@ Located in `frontend/src/api/client.ts`:
 | `listRuns()` | GET /api/extract/runs | HistoryPage |
 | `getRunDetails()` | GET /api/extract/runs/{id} | HistoryPage |
 | `getGroundTruthByFilename()` | GET /api/ground-truth/by-filename/{name} | ResultsStep |
-| `compareWithGroundTruth()` | POST /api/ground-truth/compare/{filename} | ResultsStep, HistoryPage |
+
+## Historical View
+
+From the History page, users can click "View Full Results" to see the complete ResultsStep view for any past extraction run. This shows:
+
+- All extraction results exactly as they appeared originally
+- Ground truth comparison (if available for the file)
+- Full metrics grid with missed/extra row numbers
+- Side-by-side question comparison table
+
+The "Start Over" button changes to "← Back to History" when viewing historical results.
 
 ## Sheet Handling
 

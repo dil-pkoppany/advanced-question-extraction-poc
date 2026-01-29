@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     )
     bedrock_sonnet_model_id: str = (
         "arn:aws:bedrock:us-west-2::inference-profile/"
-        "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     )
     
     # Default model for extraction (Approaches 1 & 2) - defaults to Opus 4.5

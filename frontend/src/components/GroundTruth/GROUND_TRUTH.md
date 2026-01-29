@@ -60,7 +60,11 @@ Form for creating and editing ground truths.
 - Add/edit/remove questions per sheet
 - Question type selection
 - Answer options for choice types
-- Total question count summary
+- Total question count summary (shown above sheets)
+- **Bulk question upload**: Paste multiple questions separated by newlines
+- **Reverse question IDs**: Reverse order of questions and renumber IDs
+- **Mark as problematic**: Flag questions with optional comment
+- **Auto-renumbering**: IDs renumber sequentially (Q001, Q002...) after add/remove
 
 **Form Sections:**
 
@@ -150,11 +154,13 @@ sequenceDiagram
 
 ```typescript
 interface GroundTruthQuestion {
-  id: string;           // User-assigned (Q001, Q002...)
+  id: string;                    // User-assigned (Q001, Q002...)
   question_text: string;
   question_type: QuestionType;
-  answers?: string[];   // For choice types
-  row_index?: number;   // Optional Excel row reference
+  answers?: string[];            // For choice types
+  row_index?: number;            // Optional Excel row reference
+  is_problematic?: boolean;      // Mark question as problematic
+  problematic_comment?: string;  // Optional comment explaining issue
 }
 ```
 
@@ -258,11 +264,20 @@ When ground truth exists for an Excel file, extraction results are automatically
 | **Type Match** | % of matched questions with correct type | Green ≥90%, Orange 70-89%, Red <70% |
 | **Answer Match** | % of matched questions with correct answers | Green ≥90%, Orange 70-89%, Red <70% |
 | **Overall** | Weighted accuracy score | Green ≥90%, Orange 70-89%, Red <70% |
+| **Missed** | GT questions not extracted | Click to see row numbers |
+| **Extra** | Extracted questions not in GT | Click to see row numbers |
 
 **Overall Accuracy Formula:**
 ```
 overall = (text_match × 0.5) + (type_match × 0.3) + (answer_match × 0.2)
 ```
+
+### Missed/Extra Row Numbers
+
+When you click on the Missed or Extra count (if > 0):
+- Expands to show table row numbers (e.g., `#5`, `#12`, `#23`)
+- Row numbers match the `#` column in the comparison table below
+- Helps quickly identify which questions were missed or are extra
 
 ### Question Row Coloring
 
@@ -275,15 +290,45 @@ Colors are applied **per-cell** (per approach column), not to entire rows:
 | **Red border** | Missing (GT question not extracted) or Extra (not in GT) |
 | **No border** | No ground truth to compare against |
 
+### Inline Difference Badges
+
+Small badges appear in approach columns to show specific differences:
+
+| Badge | Color | Meaning |
+|-------|-------|---------|
+| `TEXT` | Red | Question text differs from GT |
+| `TYPE` | Orange | Question type doesn't match |
+| `ANSWERS` | Orange | Answer options differ |
+| `EXTRA` | Red | Question not in ground truth |
+
+### Duplicate Detection
+
+Duplicate questions in ground truth are highlighted:
+
+- **Orange `DUP #X` badge**: Shows other row numbers with identical question text
+- **Orange background**: Cells with duplicates have a light orange tint
+- Example: Row 5 shows `DUP #12` if row 12 has the same question text
+
+This helps identify intentional vs. accidental duplicates in your ground truth data.
+
+### No Deduplication of Ground Truth
+
+**Important**: The comparison table preserves ALL ground truth questions:
+- If GT has 47 questions, the table shows 47 rows
+- Even if some GT questions have identical text, each appears as a separate row
+- This ensures ground truth is the authoritative reference ("etalon")
+
 ### Comparison Data Types
 
 ```typescript
 interface DetailedMetrics {
-  textMatchRate: number;    // GT questions found / total GT questions
-  typeMatchRate: number;    // Correct types / matched questions
-  answerMatchRate: number;  // Correct answers / questions with answers
-  overallAccuracy: number;  // Weighted average
-  matchedCount: number;     // Number of exact text matches
+  textMatchRate: number;      // GT questions found / total GT questions
+  typeMatchRate: number;      // Correct types / matched questions
+  answerMatchRate: number;    // Correct answers / questions with answers
+  overallAccuracy: number;    // Weighted average
+  matchedCount: number;       // Number of exact text matches
+  missedRowNumbers: number[]; // Table row numbers of missed questions
+  extraRowNumbers: number[];  // Table row numbers of extra questions
 }
 ```
 

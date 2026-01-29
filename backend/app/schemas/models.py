@@ -65,7 +65,7 @@ class ModelType(str, Enum):
     """Available LLM models for extraction."""
 
     OPUS_4_5 = "opus-4.5"
-    SONNET_4 = "sonnet-4"
+    SONNET_4_5 = "sonnet-4.5"
 
 
 class ExtractionConfig(BaseModel):

@@ -78,13 +78,13 @@ All models accessed via **AWS Bedrock**.
 | Model | ID | Purpose | Settings |
 |-------|-----|---------|----------|
 | **Claude Opus 4.5** | `us.anthropic.claude-opus-4-5-20251101-v1:0` | Primary extraction (Approaches 1 & 2) | temp: 0.1, max_tokens: 24576 |
-| **Claude Sonnet 4** | `us.anthropic.claude-sonnet-4-20250514-v1:0` | Faster extraction alternative | temp: 0.1, max_tokens: 16384 |
+| **Claude Sonnet 4.5** | `us.anthropic.claude-sonnet-4-5-20250514-v1:0` | Faster extraction alternative | temp: 0.1, max_tokens: 16384 |
 | **Claude 3 Haiku** | `global.anthropic.claude-3-haiku-20240307-v1:0` | Judge model (Approach 3) | temp: 0.0, max_tokens: 1024 |
 
 ### Model Selection
 
 - **Opus 4.5**: Default for complex extractions, highest quality
-- **Sonnet 4**: Use when speed matters more than marginal quality gains
+- **Sonnet 4.5**: Use when speed matters more than marginal quality gains
 - **Haiku**: Only used internally for Approach 3 validation (not user-selectable)
 
 ## Dependencies
