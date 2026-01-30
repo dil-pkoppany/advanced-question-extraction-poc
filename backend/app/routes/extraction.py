@@ -59,7 +59,7 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
     # Determine which models to run
     models_to_run = []
     if request.config.compare_models:
-        models_to_run = [ModelType.OPUS_4_5, ModelType.SONNET_4]
+        models_to_run = [ModelType.OPUS_4_5, ModelType.SONNET_4_5]
     else:
         models_to_run = [request.config.model]
 

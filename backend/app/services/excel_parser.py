@@ -63,7 +63,8 @@ class ExcelParser:
             if value and value.strip():
                 columns.append(value.strip())
             else:
-                columns.append(f"Column_{col_idx + 1}")
+                # Use 0-based column index to match markitdown format
+                columns.append(f"Unnamed: {col_idx}")
         
         # Count data rows (excluding header)
         data_rows = rows[1:]
@@ -102,8 +103,8 @@ class ExcelParser:
                 if cell.value is not None:
                     columns.append(str(cell.value))
                 else:
-                    # Use 1-based column index for empty headers
-                    columns.append(f"Column_{col_idx + 1}")
+                    # Use 0-based column index to match markitdown format
+                    columns.append(f"Unnamed: {col_idx}")
 
             # Count rows (excluding header)
             row_count = 0
@@ -373,7 +374,8 @@ class ExcelParser:
                 if cell.value is not None:
                     col_name = str(cell.value)
                 else:
-                    col_name = f"Column_{idx + 1}"
+                    # Use 0-based column index to match markitdown format
+                    col_name = f"Unnamed: {idx}"
                 
                 if col_name == mapping.question_column:
                     col_indices["question"] = idx

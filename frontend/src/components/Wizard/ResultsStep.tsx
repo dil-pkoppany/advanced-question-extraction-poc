@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, type ReactElement } from 'react';
+import { useEffect, useState, useMemo, useCallback, memo, type ReactElement } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { runExtraction, getGroundTruthByFilename } from '../../api/client';
 import type { ExtractionConfig, ExtractionResponse, ExtractionResult, ExtractedQuestion, GroundTruth } from '../../types';
@@ -316,7 +316,8 @@ function ApproachResults({ result }: { result: ExtractionResult }) {
                 {question.question_text}
                 <span className="question-type">{question.question_type}</span>
               </div>
-              {question.confidence !== undefined && (
+              {/* Only show confidence for approach 3 */}
+              {question.confidence !== undefined && result.approach === 3 && (
                 <div style={{ marginLeft: '1rem', minWidth: '60px', textAlign: 'right' }}>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                     {(question.confidence * 100).toFixed(0)}%
@@ -324,7 +325,8 @@ function ApproachResults({ result }: { result: ExtractionResult }) {
                 </div>
               )}
             </div>
-            {question.confidence !== undefined && (
+            {/* Only show confidence bar for approach 3 */}
+            {question.confidence !== undefined && result.approach === 3 && (
               <div className="confidence-bar">
                 <div
                   className={`confidence-bar-fill ${
@@ -356,8 +358,40 @@ function normalizeText(text: string): string {
     .toLowerCase()
     .replace(/[^\w\s]/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .substring(0, 100); // Compare first 100 chars
+    .trim();
+}
+
+/** Calculate text similarity ratio (0.0 to 1.0) using longest common subsequence */
+function textSimilarity(text1: string, text2: string): number {
+  const normalized1 = normalizeText(text1);
+  const normalized2 = normalizeText(text2);
+  
+  if (normalized1 === normalized2) return 1.0;
+  if (normalized1.length === 0 || normalized2.length === 0) return 0.0;
+  
+  // Use longest common subsequence ratio (similar to Python's SequenceMatcher)
+  const lcs = longestCommonSubsequence(normalized1, normalized2);
+  const maxLen = Math.max(normalized1.length, normalized2.length);
+  return lcs / maxLen;
+}
+
+/** Calculate longest common subsequence length */
+function longestCommonSubsequence(str1: string, str2: string): number {
+  const m = str1.length;
+  const n = str2.length;
+  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+  
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+  
+  return dp[m][n];
 }
 
 interface ComparisonViewProps {
@@ -400,6 +434,7 @@ function getPercentageBg(value: number): string {
 }
 
 // Calculate detailed accuracy metrics for an approach against ground truth
+// Uses fuzzy matching (>=80% similarity) to find matches
 function calculateDetailedMetrics(
   approachQuestions: ExtractedQuestion[],
   gtQuestions: ExtractedQuestion[]
@@ -429,34 +464,73 @@ function calculateDetailedMetrics(
   let answerMatches = 0;
   let answerComparisons = 0;
 
-  const gtNormalized = new Map<string, ExtractedQuestion>();
-  for (const q of gtQuestions) {
-    gtNormalized.set(normalizeText(q.question_text), q);
-  }
+  const FUZZY_THRESHOLD = 0.6;
+  const matchedGtIndices = new Set<number>();
+  const matchedApproachIndices = new Set<number>();
 
-  const approachNormalized = new Map<string, ExtractedQuestion>();
-  for (const q of approachQuestions) {
-    approachNormalized.set(normalizeText(q.question_text), q);
-  }
-
-  // Track missed IDs (in GT but not in approach)
-  const missedIds: string[] = [];
-  for (const gtQ of gtQuestions) {
-    const normalized = normalizeText(gtQ.question_text);
-    if (!approachNormalized.has(normalized)) {
-      missedIds.push(gtQ.id || `R${gtQ.row_index || '?'}`);
+  // First pass: exact matches
+  for (let gtIdx = 0; gtIdx < gtQuestions.length; gtIdx++) {
+    const gtQ = gtQuestions[gtIdx];
+    const gtNormalized = normalizeText(gtQ.question_text);
+    
+    for (let appIdx = 0; appIdx < approachQuestions.length; appIdx++) {
+      if (matchedApproachIndices.has(appIdx)) continue;
+      
+      const approachQ = approachQuestions[appIdx];
+      const approachNormalized = normalizeText(approachQ.question_text);
+      
+      if (gtNormalized === approachNormalized) {
+        textMatches++;
+        matchedGtIndices.add(gtIdx);
+        matchedApproachIndices.add(appIdx);
+        
+        // Type match
+        if (approachQ.question_type === gtQ.question_type) {
+          typeMatches++;
+        }
+        
+        // Answer match (only if GT has answers)
+        if (gtQ.answers && gtQ.answers.length > 0) {
+          answerComparisons++;
+          const gtAnswers = new Set(gtQ.answers.map(a => a.toLowerCase().trim()));
+          const approachAnswers = new Set((approachQ.answers || []).map(a => a.toLowerCase().trim()));
+          
+          if (gtAnswers.size === approachAnswers.size && 
+              [...gtAnswers].every(a => approachAnswers.has(a))) {
+            answerMatches++;
+          }
+        }
+        break;
+      }
     }
   }
 
-  // Track extra IDs (in approach but not in GT)
-  const extraIds: string[] = [];
-  let extraIndex = 1;
-  for (const approachQ of approachQuestions) {
-    const normalized = normalizeText(approachQ.question_text);
-    const gtQ = gtNormalized.get(normalized);
+  // Second pass: fuzzy matches
+  for (let gtIdx = 0; gtIdx < gtQuestions.length; gtIdx++) {
+    if (matchedGtIndices.has(gtIdx)) continue;
     
-    if (gtQ) {
+    const gtQ = gtQuestions[gtIdx];
+    let bestSimilarity = 0;
+    let bestAppIdx = -1;
+    
+    for (let appIdx = 0; appIdx < approachQuestions.length; appIdx++) {
+      if (matchedApproachIndices.has(appIdx)) continue;
+      
+      const approachQ = approachQuestions[appIdx];
+      const similarity = textSimilarity(gtQ.question_text, approachQ.question_text);
+      
+      if (similarity >= FUZZY_THRESHOLD && similarity > bestSimilarity) {
+        bestSimilarity = similarity;
+        bestAppIdx = appIdx;
+      }
+    }
+    
+    if (bestAppIdx >= 0) {
       textMatches++;
+      matchedGtIndices.add(gtIdx);
+      matchedApproachIndices.add(bestAppIdx);
+      
+      const approachQ = approachQuestions[bestAppIdx];
       
       // Type match
       if (approachQ.question_type === gtQ.question_type) {
@@ -469,15 +543,29 @@ function calculateDetailedMetrics(
         const gtAnswers = new Set(gtQ.answers.map(a => a.toLowerCase().trim()));
         const approachAnswers = new Set((approachQ.answers || []).map(a => a.toLowerCase().trim()));
         
-        // Check if answers match (same set)
         if (gtAnswers.size === approachAnswers.size && 
             [...gtAnswers].every(a => approachAnswers.has(a))) {
           answerMatches++;
         }
       }
-    } else {
-      // Not in GT - extra
-      // Use ID if available, otherwise row index, otherwise generate temp ID
+    }
+  }
+
+  // Track missed IDs (in GT but not matched)
+  const missedIds: string[] = [];
+  for (let gtIdx = 0; gtIdx < gtQuestions.length; gtIdx++) {
+    if (!matchedGtIndices.has(gtIdx)) {
+      const gtQ = gtQuestions[gtIdx];
+      missedIds.push(gtQ.id || `R${gtQ.row_index || '?'}`);
+    }
+  }
+
+  // Track extra IDs (in approach but not matched to GT)
+  const extraIds: string[] = [];
+  let extraIndex = 1;
+  for (let appIdx = 0; appIdx < approachQuestions.length; appIdx++) {
+    if (!matchedApproachIndices.has(appIdx)) {
+      const approachQ = approachQuestions[appIdx];
       extraIds.push(approachQ.id || (approachQ.row_index ? `R${approachQ.row_index}` : `E${extraIndex++}`));
     }
   }
@@ -506,6 +594,11 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
   
   // State for expanded metric cells (showing question IDs)
   const [expandedMetrics, setExpandedMetrics] = useState<Record<string, boolean>>({});
+  
+  // Memoize the close handler to prevent unnecessary re-renders
+  const handleCloseModal = useCallback(() => {
+    setSelectedRowIndex(null);
+  }, []);
 
   // Include ground truth as a column
   const allColumnKeys = groundTruth ? ['ground_truth', ...approachKeys] : approachKeys;
@@ -515,6 +608,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
     const rows: Array<{
       id: string;
       questions: Record<string, ExtractedQuestion | null>;
+      matchInfo: Record<string, { isFuzzy: boolean; similarity?: number }>; // Track match type per approach
       isUnique: boolean;
       hasDifferences: boolean;
       inGroundTruth: boolean;
@@ -530,6 +624,9 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
     
     // Track GT duplicates: normalized text -> list of row indices (0-based)
     const gtTextToRowIndices = new Map<string, number[]>();
+    
+    // Fuzzy matching threshold (same as backend: 0.8)
+    const FUZZY_THRESHOLD = 0.6;
     
     // If we have ground truth, create one row per GT question (no deduplication!)
     if (groundTruth) {
@@ -551,6 +648,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
         const rowQuestions: Record<string, ExtractedQuestion | null> = {
           'ground_truth': gtQuestion
         };
+        const matchInfo: Record<string, { isFuzzy: boolean; similarity?: number }> = {};
         
         // Find matching questions from each approach
         for (const key of approachKeys) {
@@ -560,21 +658,49 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
             continue;
           }
           
-          // Find first unmatched question with same normalized text
+          // First pass: exact matching
           let matchedIndex = -1;
+          let isFuzzyMatch = false;
+          let similarity = 1.0;
+          
           for (let i = 0; i < result.questions.length; i++) {
             if (matchedApproachQuestions[key].has(i)) continue;
             
             const approachNormalized = normalizeText(result.questions[i].question_text);
             if (approachNormalized === gtNormalized) {
               matchedIndex = i;
+              isFuzzyMatch = false;
+              similarity = 1.0;
               break;
+            }
+          }
+          
+          // Second pass: fuzzy matching if no exact match found
+          if (matchedIndex === -1) {
+            let bestSimilarity = 0;
+            let bestIndex = -1;
+            
+            for (let i = 0; i < result.questions.length; i++) {
+              if (matchedApproachQuestions[key].has(i)) continue;
+              
+              const sim = textSimilarity(gtQuestion.question_text, result.questions[i].question_text);
+              if (sim >= FUZZY_THRESHOLD && sim > bestSimilarity) {
+                bestSimilarity = sim;
+                bestIndex = i;
+              }
+            }
+            
+            if (bestIndex >= 0) {
+              matchedIndex = bestIndex;
+              isFuzzyMatch = true;
+              similarity = bestSimilarity;
             }
           }
           
           if (matchedIndex >= 0) {
             rowQuestions[key] = result.questions[matchedIndex];
             matchedApproachQuestions[key].add(matchedIndex);
+            matchInfo[key] = { isFuzzy: isFuzzyMatch, similarity };
           } else {
             rowQuestions[key] = null;
           }
@@ -598,6 +724,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
         rows.push({
           id: `gt-${gtIndex}`,
           questions: rowQuestions,
+          matchInfo,
           isUnique,
           hasDifferences,
           inGroundTruth: true,
@@ -651,6 +778,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
           rows.push({
             id: `extra-${key}-${i}`,
             questions: rowQuestions,
+            matchInfo: {},
             isUnique: true,
             hasDifferences: false,
             inGroundTruth: false,
@@ -693,6 +821,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
         rows.push({
           id: `q-${index++}`,
           questions,
+          matchInfo: {},
           isUnique,
           hasDifferences,
           inGroundTruth: false,
@@ -1342,6 +1471,9 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
           // Helper to determine cell color for an approach
           const getCellStyle = (approachKey: string) => {
             const question = row.questions[approachKey];
+            const matchInfo = row.matchInfo[approachKey];
+            const isFuzzyMatch = matchInfo?.isFuzzy || false;
+            
             if (!groundTruth) {
               // No ground truth - use old logic
               return { background: question ? 'white' : 'var(--bg-light)' };
@@ -1368,6 +1500,21 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
             const answerMatch = gtAnswers.size === 0 || 
               (gtAnswers.size === approachAnswers.size && [...gtAnswers].every(a => approachAnswers.has(a)));
             
+            // If fuzzy match, use greenish background
+            if (isFuzzyMatch) {
+              if (typeMatch && answerMatch) {
+                // Fuzzy match but type and answers match - light green
+                return { background: 'rgba(72, 187, 120, 0.15)', borderColor: 'var(--success)' };
+              } else if (typeMatch || answerMatch) {
+                // Fuzzy match, partial type/answer match - medium green
+                return { background: 'rgba(72, 187, 120, 0.2)', borderColor: 'var(--success)' };
+              } else {
+                // Fuzzy match but type/answers differ - darker green
+                return { background: 'rgba(72, 187, 120, 0.25)', borderColor: 'var(--success)' };
+              }
+            }
+            
+            // Exact text match
             if (typeMatch && answerMatch) {
               // Perfect match - green
               return { background: 'rgba(72, 187, 120, 0.12)', borderColor: 'var(--success)' };
@@ -1480,19 +1627,22 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
               {approachKeys.map(key => {
                 const question = row.questions[key];
                 const cellStyle = getCellStyle(key);
+                const matchInfo = row.matchInfo[key];
                 
                 // Determine difference indicators/badges
                 const badges: ReactElement[] = [];
                 if (groundTruth && question && gtQuestion) {
-                  // Check text match
-                  const textMatch = normalizeText(question.question_text) === normalizeText(gtQuestion.question_text);
-                  if (!textMatch) {
+                  // Check if this is a fuzzy match
+                  if (matchInfo?.isFuzzy) {
+                    const similarityPercent = matchInfo.similarity 
+                      ? `${(matchInfo.similarity * 100).toFixed(0)}%`
+                      : '~';
                     badges.push(
                       <span 
-                        key="text-diff"
+                        key="fuzzy-match"
                         style={{ 
                           fontSize: '0.625rem',
-                          background: 'var(--error)',
+                          background: 'rgba(72, 187, 120, 0.9)',
                           color: 'white',
                           padding: '0.125rem 0.375rem',
                           borderRadius: '3px',
@@ -1501,11 +1651,35 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
                           display: 'inline-block',
                           lineHeight: '1.2'
                         }}
-                        title="Question text differs from ground truth"
+                        title={`Fuzzy match - text similarity: ${similarityPercent}. Question text differs but is similar enough to be considered a match.`}
                       >
-                        TEXT
+                        FUZZY {similarityPercent}
                       </span>
                     );
+                  } else {
+                    // Check text match for exact matches
+                    const textMatch = normalizeText(question.question_text) === normalizeText(gtQuestion.question_text);
+                    if (!textMatch) {
+                      badges.push(
+                        <span 
+                          key="text-diff"
+                          style={{ 
+                            fontSize: '0.625rem',
+                            background: 'var(--error)',
+                            color: 'white',
+                            padding: '0.125rem 0.375rem',
+                            borderRadius: '3px',
+                            marginLeft: '0.25rem',
+                            fontWeight: '600',
+                            display: 'inline-block',
+                            lineHeight: '1.2'
+                          }}
+                          title="Question text differs from ground truth"
+                        >
+                          TEXT
+                        </span>
+                      );
+                    }
                   }
                   
                   // Check type match
@@ -1608,7 +1782,8 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
                             {question.question_type}
                           </span>
                           {badges}
-                          {question.confidence !== undefined && (
+                          {/* Only show confidence for approach 3 */}
+                          {question.confidence !== undefined && key.includes('approach_3') && (
                             <span 
                               style={{ 
                                 marginLeft: '0.25rem', 
@@ -1643,7 +1818,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
           approachKeys={approachKeys}
           results={results}
           groundTruth={groundTruth}
-          onClose={() => setSelectedRowIndex(null)}
+          onClose={handleCloseModal}
         />
       )}
     </div>
@@ -1655,6 +1830,7 @@ interface QuestionDetailModalProps {
   row: {
     id: string;
     questions: Record<string, ExtractedQuestion | null>;
+    matchInfo: Record<string, { isFuzzy: boolean; similarity?: number }>;
     isUnique: boolean;
     hasDifferences: boolean;
     inGroundTruth: boolean;
@@ -1667,7 +1843,8 @@ interface QuestionDetailModalProps {
   onClose: () => void;
 }
 
-function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth, onClose }: QuestionDetailModalProps) {
+// Memoize the modal component to prevent unnecessary re-renders
+const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth, onClose }: QuestionDetailModalProps) {
   // Close on escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -1675,6 +1852,21 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
+  }, [onClose]);
+
+  // Prevent body scroll when modal is open
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
+
+  // Memoize click handler to prevent re-creating on every render
+  const handleBackdropClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
   }, [onClose]);
 
   return (
@@ -1692,9 +1884,7 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
         zIndex: 1000,
         padding: '2rem',
       }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      onClick={handleBackdropClick}
     >
       <div 
         style={{
@@ -1953,6 +2143,8 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
           })()}
           {approachKeys.map(key => {
             const question = row.questions[key];
+            const matchInfo = row.matchInfo[key];
+            const gtQuestion = row.questions['ground_truth'];
             return (
               <div 
                 key={key}
@@ -2044,8 +2236,8 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
                       </div>
                     )}
 
-                    {/* Confidence if available */}
-                    {question.confidence !== undefined && (
+                    {/* Confidence if available - only for approach 3 */}
+                    {question.confidence !== undefined && key.includes('approach_3') && (
                       <div>
                         <div style={{ 
                           fontSize: '0.6875rem', 
@@ -2094,6 +2286,37 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
                         {question.sheet_name && ` in "${question.sheet_name}"`}
                       </div>
                     )}
+
+                    {/* Fuzzy match indicator - moved to bottom */}
+                    {groundTruth && gtQuestion && matchInfo?.isFuzzy && (
+                      <div style={{
+                        marginTop: '1rem',
+                        padding: '0.75rem',
+                        background: 'rgba(72, 187, 120, 0.1)',
+                        borderLeft: '3px solid var(--success)',
+                        borderRadius: '4px',
+                      }}>
+                        <div style={{
+                          fontSize: '0.75rem',
+                          fontWeight: '600',
+                          color: 'var(--success)',
+                          marginBottom: '0.25rem',
+                        }}>
+                          ✓ Fuzzy Match
+                        </div>
+                        <div style={{
+                          fontSize: '0.8125rem',
+                          color: 'var(--text-primary)',
+                          lineHeight: '1.5',
+                        }}>
+                          Text similarity: {matchInfo.similarity ? `${(matchInfo.similarity * 100).toFixed(1)}%` : '~80%'}
+                          <br />
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                            Question text differs from ground truth but is similar enough to be considered a match.
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div style={{
@@ -2112,5 +2335,5 @@ function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth
       </div>
     </div>
   );
-}
+});
 

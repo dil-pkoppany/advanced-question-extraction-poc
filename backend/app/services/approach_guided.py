@@ -144,7 +144,7 @@ class GuidedExtractionService:
         expected_count: int,
     ) -> str:
         """Build dynamic prompt with user-provided context."""
-        # Build column context
+        # Build column context with per-sheet information
         column_context = "USER-PROVIDED STRUCTURE INFORMATION:\n"
         for mapping in column_mappings:
             column_context += f"\nSheet: {mapping.sheet_name}\n"
@@ -153,25 +153,25 @@ class GuidedExtractionService:
                 column_context += f"  - Answer column: {mapping.answer_column}\n"
             if mapping.type_column:
                 column_context += f"  - Type column: {mapping.type_column}\n"
-            column_context += f"  - Data starts at row: {mapping.start_row}\n"
-
-        # Build type context
-        type_context = ""
-        if question_types:
-            types_str = ", ".join(t.value for t in question_types)
-            type_context = f"\nEXPECTED QUESTION TYPES: {types_str}\n"
+            if mapping.question_types:
+                types_str = ", ".join(t.value for t in mapping.question_types)
+                column_context += f"  - Expected question types: {types_str}\n"
+            column_context += f"  - Start extracting from row: {mapping.start_row} (first potential question row; skip any header/instruction rows above)\n"
 
         return f"""Extract ALL questions from this survey content.
 
 {column_context}
-{type_context}
 EXPECTED COUNT: Approximately {expected_count} questions should be extracted.
 
 EXTRACTION RULES
 
-Focus on the columns specified above. The question text is in the "{column_mappings[0].question_column}" column.
+For each sheet listed above:
+- Extract questions from the specified question column starting at the indicated row
+- Use the answer column if specified to include answer options but try and find answer options even if the answer column is not specified
+- Focus on the expected question types listed for each sheet (if provided)
+- Some rows may contain instructions or non-question text - extract only actual questions
 
-EXTRACT EVERY ROW: Each row in the question column represents one question. Extract all {expected_count} rows.
+EXTRACT EVERY ROW: Starting from the specified start row in each sheet's question column, extract all questions.
 
 ANSWER OPTIONS: If answers are in a separate column, include them after the question in parentheses, separated by "|".
 
@@ -191,7 +191,7 @@ OUTPUT FORMAT:
   <q type="single_choice">Question? (Option A|Option B)</q>
 </questions>
 
-IMPORTANT: Extract exactly {expected_count} questions if possible. Return ONLY the XML."""
+IMPORTANT: Return ONLY the XML."""
 
     async def _invoke_llm(self, prompt: str) -> str:
         """Invoke Bedrock LLM."""

@@ -68,13 +68,9 @@ export function ConfigStep({
           sheet_name: sheet.name,
           question_column: sheet.columns[0] || '',
           answer_column: undefined,
-          question_types: [],
+          question_types: config.question_types || [],
           start_row: 2,
         }))
-  );
-
-  const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(
-    config.question_types || []
   );
 
   const toggleSheetIncluded = (sheetName: string) => {
@@ -95,10 +91,12 @@ export function ConfigStep({
     setMappings(newMappings);
   };
 
-  const toggleQuestionType = (type: QuestionType) => {
-    setSelectedTypes((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
-    );
+  const toggleQuestionType = (sheetIndex: number, type: QuestionType) => {
+    const currentTypes = mappings[sheetIndex]?.question_types || [];
+    const newTypes = currentTypes.includes(type)
+      ? currentTypes.filter((t) => t !== type)
+      : [...currentTypes, type];
+    updateMapping(sheetIndex, { question_types: newTypes });
   };
 
   const handleNext = () => {
@@ -107,10 +105,16 @@ export function ConfigStep({
       (m) => includedSheets.has(m.sheet_name) && m.question_column
     );
     
+    // Collect all question types across all sheets for backward compatibility
+    const allQuestionTypes = new Set<QuestionType>();
+    validMappings.forEach(m => {
+      m.question_types.forEach(t => allQuestionTypes.add(t));
+    });
+    
     onConfigChange({
       ...config,
       column_mappings: validMappings,
-      question_types: selectedTypes,
+      question_types: Array.from(allQuestionTypes), // Keep for backward compatibility
     });
     onNext();
   };
@@ -125,28 +129,6 @@ export function ConfigStep({
         <span style={{ fontSize: '1.5rem' }}>⚙️</span>
         <h2>Configure Column Mappings</h2>
       </div>
-
-      {/* Question types selection (for approach 2) */}
-      {config.approach === 2 && (
-        <div className="form-group">
-          <label className="form-label">Expected Question Types</label>
-          <div className="multiselect">
-            {QUESTION_TYPES.map((type) => (
-              <button
-                key={type.value}
-                type="button"
-                className={`multiselect-option ${selectedTypes.includes(type.value) ? 'selected' : ''}`}
-                onClick={() => toggleQuestionType(type.value)}
-              >
-                {type.label}
-              </button>
-            ))}
-          </div>
-          <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
-            Select the types of questions you expect to find in this file
-          </p>
-        </div>
-      )}
 
       {/* Sheet/column mappings */}
       <div style={{ marginTop: '1.5rem' }}>
@@ -250,6 +232,29 @@ export function ConfigStep({
                       </select>
                     </div>
                   </div>
+
+                  {/* Per-sheet question types selection (for approach 2 or when comparing all approaches) */}
+                  {(config.approach === 2 || config.run_all_approaches) && (
+                    <div className="form-group" style={{ marginTop: '1rem' }}>
+                      <label className="form-label">Expected Question Types (for this sheet)</label>
+                      <div className="multiselect">
+                        {QUESTION_TYPES.map((type) => (
+                          <button
+                            key={type.value}
+                            type="button"
+                            className={`multiselect-option ${(mappings[index]?.question_types || []).includes(type.value) ? 'selected' : ''}`}
+                            onClick={() => toggleQuestionType(index, type.value)}
+                          >
+                            {type.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                        Select the types of questions you expect to find in this sheet (optional)
+                        {config.run_all_approaches && ' - Used by Approach 2 (User-Guided)'}
+                      </p>
+                    </div>
+                  )}
 
                   {/* Sample data preview */}
                   {sheet.sample_data.length > 0 && (
