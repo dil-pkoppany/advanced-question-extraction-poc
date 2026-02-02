@@ -277,6 +277,8 @@ Return ONLY the XML."""
         self, structure: dict, file_path: str, intermediate_dir: Path | None, run_id: str
     ) -> str:
         """Step 3: Extract questions with types, answers, dependencies."""
+        import re
+        
         # Extract data with context (question cell + adjacent cells)
         batches = self._extract_with_context(structure, file_path)
         
@@ -285,6 +287,10 @@ Return ONLY the XML."""
         
         for batch in batches:
             batch_num += 1
+            
+            # Get the actual sheet name from the batch (all items in batch are from same sheet)
+            actual_sheet_name = batch[0].get("sheet", "Sheet1") if batch else "Sheet1"
+            
             prompt = self._build_extraction_prompt(batch)
             
             # Save prompt
@@ -295,7 +301,15 @@ Return ONLY the XML."""
             response = await self._invoke_llm(prompt, self.model_id, "xml")
             self.total_llm_calls += 1
             
-            # Save batch XML
+            # Replace any sheet name in the XML with the actual sheet name
+            # The LLM might output sheet="Sheet1" but we know the real sheet name
+            response = re.sub(
+                r'sheet="[^"]*"',
+                f'sheet="{actual_sheet_name}"',
+                response
+            )
+            
+            # Save batch XML (with corrected sheet name)
             if intermediate_dir:
                 xml_file = intermediate_dir / f"step3_question_extraction_batch_{batch_num}.xml"
                 xml_file.write_text(response)
@@ -315,12 +329,17 @@ Return ONLY the XML."""
         return combined_xml
 
     def _extract_with_context(self, structure: dict, file_path: str) -> list[list[dict]]:
-        """Extract question cells with adjacent cell context."""
+        """Extract question cells with adjacent cell context.
+        
+        Uses sheet-based batching: one batch per sheet.
+        This keeps all questions from a sheet together, ensuring:
+        - Follow-up questions stay with their parent questions
+        - Multi-row answer options are not split across batches
+        - Dependencies can use simple row numbers (within same sheet)
+        """
         import openpyxl
         
         batches = []
-        current_batch = []
-        batch_size = 25  # Process 25 questions per batch
         
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         
@@ -354,6 +373,9 @@ Return ONLY the XML."""
                 if q_col_idx is None:
                     continue
                 
+                # One batch per sheet - keeps all questions from this sheet together
+                sheet_batch = []
+                
                 # Extract rows with context, detecting multiple-choice question patterns
                 row_idx = data_start
                 while row_idx <= ws.max_row:
@@ -370,13 +392,13 @@ Return ONLY the XML."""
                             answer_cell = row[a_col_idx]
                             if answer_cell and answer_cell.value:
                                 # This might be a continuation row - check previous row
-                                if current_batch and current_batch[-1].get("row") == row_idx - 1:
+                                if sheet_batch and sheet_batch[-1].get("row") == row_idx - 1:
                                     # Add this as an additional answer option to previous question
                                     answer_text = str(answer_cell.value).strip()
-                                    if "answer_options" not in current_batch[-1]:
-                                        current_batch[-1]["answer_options"] = []
+                                    if "answer_options" not in sheet_batch[-1]:
+                                        sheet_batch[-1]["answer_options"] = []
                                     if answer_text:
-                                        current_batch[-1]["answer_options"].append(answer_text)
+                                        sheet_batch[-1]["answer_options"].append(answer_text)
                                     row_idx += 1
                                     continue
                         row_idx += 1
@@ -436,16 +458,12 @@ Return ONLY the XML."""
                                 break
                             lookahead_idx += 1
                     
-                    current_batch.append(context)
-                    
-                    if len(current_batch) >= batch_size:
-                        batches.append(current_batch)
-                        current_batch = []
-                    
+                    sheet_batch.append(context)
                     row_idx += 1
-            
-            if current_batch:
-                batches.append(current_batch)
+                
+                # Add the sheet batch if it has any questions
+                if sheet_batch:
+                    batches.append(sheet_batch)
         
         finally:
             wb.close()
@@ -464,7 +482,7 @@ Return ONLY the XML."""
             "   - Skip: 'skip if...', 'hidden when...' → action='skip'",
             "5. Detect FOLLOW-UP questions - these indicate conditional dependencies:",
             "   - Text patterns: 'If you can not...', 'If no...', 'If not...', 'Please explain...', 'Please detail...'",
-            "   - When detected, create a dependency to the PREVIOUS question row",
+            "   - When detected, create a dependency to the PREVIOUS question row number",
             "   - Action is 'show' (follow-up appears when main question answered negatively)",
             "   - Example: Row 5 'Can you meet this requirement?' → Row 6 'If you can not, please detail here'",
             "     Row 6 should have: <depends_on question_row=\"5\" answer_value=\"No\" action=\"show\"/>",
@@ -563,8 +581,18 @@ Return ONLY the XML."""
         return "\n".join(prompt_parts)
 
     def _normalize_to_objects(self, xml: str) -> list[ExtractedQuestion]:
-        """Step 4: Convert XML to ExtractedQuestion objects."""
+        """Step 4: Convert XML to ExtractedQuestion objects.
+        
+        This method generates unique GUIDs for each question and resolves
+        dependency references from sheet:row format to GUIDs.
+        """
+        import uuid
+        
         questions = []
+        # Map sheet:row -> question_id (GUID) for dependency resolution
+        location_to_guid: dict[str, str] = {}
+        # Store raw dependency data for second pass
+        raw_dependencies: dict[int, list[dict]] = {}
         
         try:
             soup = BeautifulSoup(xml, "xml")
@@ -573,7 +601,8 @@ Return ONLY the XML."""
             if not questions_tag:
                 return questions
             
-            for q_tag in questions_tag.find_all("q"):
+            # First pass: create questions with GUIDs and build location map
+            for idx, q_tag in enumerate(questions_tag.find_all("q")):
                 question_text = q_tag.find("text")
                 if not question_text:
                     continue
@@ -623,32 +652,75 @@ Return ONLY the XML."""
                         if not conditional_inputs:
                             conditional_inputs = None
                 
-                # Dependencies
-                dependencies = []
+                # Generate GUID for this question
+                question_id = str(uuid.uuid4())
+                
+                # Store location -> GUID mapping
+                question_sheet = q_tag.get("sheet", "")
+                row_index = int(q_tag.get("row")) if q_tag.get("row") else None
+                if question_sheet and row_index is not None:
+                    location_key = f"{question_sheet}:{row_index}"
+                    location_to_guid[location_key] = question_id
+                
+                # Store raw dependencies for second pass
                 deps_tag = q_tag.find("dependencies")
                 if deps_tag:
+                    raw_deps = []
                     for dep_tag in deps_tag.find_all("depends_on"):
-                        dep = QuestionDependency(
-                            depends_on_question_id=dep_tag.get("question_row") or dep_tag.get("question_id"),
-                            depends_on_answer_value=dep_tag.get("answer_value"),
-                            condition_type=dep_tag.get("condition_type", "equals"),
-                            dependency_action=dep_tag.get("action", "show"),
-                            original_text=dep_tag.get("original_text"),
-                        )
-                        dependencies.append(dep)
+                        raw_dep_id = dep_tag.get("question_row") or dep_tag.get("question_id") or ""
+                        raw_deps.append({
+                            "raw_id": raw_dep_id,
+                            "sheet": question_sheet,
+                            "answer_value": dep_tag.get("answer_value"),
+                            "condition_type": dep_tag.get("condition_type", "equals"),
+                            "action": dep_tag.get("action", "show"),
+                            "original_text": dep_tag.get("original_text"),
+                        })
+                    if raw_deps:
+                        raw_dependencies[len(questions)] = raw_deps
                 
                 questions.append(
                     ExtractedQuestion(
+                        question_id=question_id,
                         question_text=q_text,
                         question_type=question_type,
                         answers=answers,
                         help_text=help_text,
                         conditional_inputs=conditional_inputs,
-                        dependencies=dependencies if dependencies else None,
-                        row_index=int(q_tag.get("row")) if q_tag.get("row") else None,
-                        sheet_name=q_tag.get("sheet"),
+                        dependencies=None,  # Will be set in second pass
+                        row_index=row_index,
+                        sheet_name=question_sheet if question_sheet else None,
                     )
                 )
+            
+            # Second pass: resolve dependencies using GUIDs
+            for q_idx, raw_deps in raw_dependencies.items():
+                dependencies = []
+                for raw_dep in raw_deps:
+                    # Build location key to lookup the GUID
+                    raw_id = raw_dep["raw_id"]
+                    sheet = raw_dep["sheet"]
+                    
+                    # Create composite key for lookup
+                    if sheet and raw_id:
+                        location_key = f"{sheet}:{raw_id}"
+                    else:
+                        location_key = raw_id
+                    
+                    # Resolve to GUID if found, otherwise keep the raw reference
+                    resolved_id = location_to_guid.get(location_key, location_key)
+                    
+                    dep = QuestionDependency(
+                        depends_on_question_id=resolved_id,
+                        depends_on_answer_value=raw_dep["answer_value"],
+                        condition_type=raw_dep["condition_type"],
+                        dependency_action=raw_dep["action"],
+                        original_text=raw_dep["original_text"],
+                    )
+                    dependencies.append(dep)
+                
+                if dependencies:
+                    questions[q_idx].dependencies = dependencies
         
         except Exception as e:
             logger.error(f"XML normalization error: {e}", exc_info=True)

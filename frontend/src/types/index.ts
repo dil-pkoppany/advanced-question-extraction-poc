@@ -69,7 +69,7 @@ export interface QuestionDependency {
 
 /** A single extracted question */
 export interface ExtractedQuestion {
-  id?: string;
+  question_id?: string;  // Unique GUID for this question (approach 4), used for dependency references
   question_text: string;
   question_type: QuestionType;
   answers?: string[];

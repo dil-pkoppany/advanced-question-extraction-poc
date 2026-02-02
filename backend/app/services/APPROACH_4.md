@@ -183,7 +183,7 @@ Respond in XML format:
 **Max Tokens**: 32K (Opus) / 16K (Sonnet)  
 **Temperature**: 0.1  
 **Response Format**: XML  
-**Batch Size**: 25 questions per batch
+**Batching**: One batch per sheet (sheet-based batching)
 
 ### Input Parameters
 
@@ -226,6 +226,24 @@ Row 6: "If you can not reach this requirement, please detail here."  → Follow-
        → Dependency: depends_on question_row="5" answer_value="No" action="show"
 ```
 
+### Sheet-based Batching
+
+Questions are grouped by sheet - one batch per sheet. This ensures:
+- All questions from a sheet stay together in the same LLM call
+- Follow-up questions remain with their parent questions
+- Dependencies can use simple row numbers (within the same sheet)
+- No questions or answer options are split across batches
+
+**Dependency Format:**
+- In the LLM prompt and response, dependencies use simple row numbers (e.g., `question_row="5"`)
+- During normalization, these are converted to composite keys (`SheetName:RowNumber`) for frontend compatibility
+- This prevents ambiguity when the same row number exists in multiple sheets
+
+**Cross-sheet Dependencies:**
+- Currently not supported
+- Dependencies are assumed to reference questions within the same sheet
+- Cross-sheet dependencies would require a separate post-processing step (future enhancement)
+
 ### Prompt Structure
 
 ```
@@ -238,7 +256,7 @@ Extract questions from these rows. For each:
    - Skip: 'skip if...', 'hidden when...' → action='skip'
 5. Detect FOLLOW-UP questions - these indicate conditional dependencies:
    - Text patterns: 'If you can not...', 'If no...', 'If not...', 'Please explain...', 'Please detail...'
-   - When detected, create a dependency to the PREVIOUS question row
+   - When detected, create a dependency to the PREVIOUS question row number
    - Action is 'show' (follow-up appears when main question answered negatively)
 
 IMPORTANT: If a question has multiple answer options listed in 'answer_options',
@@ -460,15 +478,17 @@ output/runs/{run_id}/
 ├── intermediate_results/
 │   ├── structure_analysis.json              # Step 1 output
 │   ├── coverage_validation.json             # Step 2 output
-│   ├── step3_extraction_batch_1_prompt.txt  # Step 3 prompts
-│   ├── step3_extraction_batch_2_prompt.txt
-│   ├── step3_question_extraction_batch_1.xml  # Step 3 XML responses
+│   ├── step3_extraction_batch_1_prompt.txt  # Step 3 prompts (one per sheet)
+│   ├── step3_extraction_batch_2_prompt.txt  # Batch N = Sheet N
+│   ├── step3_question_extraction_batch_1.xml  # Step 3 XML responses (one per sheet)
 │   ├── step3_question_extraction_batch_2.xml
-│   ├── step3_question_extraction_combined.xml
+│   ├── step3_question_extraction_combined.xml  # All sheets combined
 │   └── normalized_questions.json            # Step 4 output (final)
 ├── approach_4_result.json                   # Final extraction result
 └── metadata.json                            # Run metadata
 ```
+
+> **Note**: With sheet-based batching, each batch corresponds to one sheet. If an Excel file has 3 sheets with questions, there will be 3 batches.
 
 ---
 

@@ -570,20 +570,19 @@ const ComparisonRows = memo(function ComparisonRows({
   groundTruth, 
   onRowClick 
 }: ComparisonRowsProps) {
-  // Build mapping from question row_index (Excel row) to table row position (1-based)
+  // Build mapping from question_id (GUID) to table row position (1-based)
+  // Dependencies reference other questions by their GUID
   const questionIdToTableRow = useMemo(() => {
     const mapping = new Map<string, number>();
     
     comparisonData.forEach((row, index) => {
       const tableRowNum = index + 1; // 1-based table row
       
-      // For each question in the row, map its row_index to this table row
+      // For each question in the row, map its GUID to this table row
       Object.values(row.questions).forEach(question => {
-        if (question?.row_index !== undefined) {
-          const rowIndexStr = String(question.row_index);
-          // Only set if not already mapped (first occurrence wins)
-          if (!mapping.has(rowIndexStr)) {
-            mapping.set(rowIndexStr, tableRowNum);
+        if (question?.question_id) {
+          if (!mapping.has(question.question_id)) {
+            mapping.set(question.question_id, tableRowNum);
           }
         }
       });
@@ -618,7 +617,7 @@ interface ComparisonRowProps {
   results: Record<string, ExtractionResult>;
   hasGroundTruth: boolean;
   onRowClick: (index: number) => void;
-  questionIdToTableRow: Map<string, number>; // Maps "row_index" to table row (1-based)
+  questionIdToTableRow: Map<string, number>; // Maps question_id (GUID) to table row (1-based)
 }
 
 const ComparisonRow = memo(function ComparisonRow({ 
@@ -807,9 +806,10 @@ const ComparisonRow = memo(function ComparisonRow({
                     const depQuestionId = dep.depends_on_question_id;
                     const bgColor = depAction === 'skip' ? '#8b5cf6' : '#0ea5e9'; // purple for skip, cyan for show
                     
-                    // Map the question ID (Excel row_index) to table row position
+                    // Map the dependency's composite key (sheet:row) to table row position
                     const tableRowNum = depQuestionId ? questionIdToTableRow.get(depQuestionId) : undefined;
-                    const displayId = tableRowNum ? `#${tableRowNum}` : (depQuestionId ? `row ${depQuestionId}` : '?');
+                    // If lookup fails, show the raw dependency ID to help debug
+                    const displayId = tableRowNum !== undefined ? `#${tableRowNum}` : (depQuestionId ? `(${depQuestionId})` : '?');
                     
                     return (
                       <span
@@ -823,7 +823,7 @@ const ComparisonRow = memo(function ComparisonRow({
                           fontWeight: '600',
                           textTransform: 'uppercase',
                         }}
-                        title={`${depAction.toUpperCase()}: Depends on ${tableRowNum ? `table row #${tableRowNum}` : `Excel row ${depQuestionId || '?'}`} when "${dep.depends_on_answer_value || 'condition met'}"`}
+                        title={`${depAction.toUpperCase()}: Depends on ${tableRowNum !== undefined ? `table row #${tableRowNum}` : `ref ${depQuestionId || '?'} (not found in table)`} when "${dep.depends_on_answer_value || 'condition met'}"`}
                       >
                         {depAction === 'skip' ? 'SKIP' : 'DEP'}: {displayId}
                       </span>
@@ -999,7 +999,7 @@ function calculateDetailedMetrics(
   for (let gtIdx = 0; gtIdx < gtQuestions.length; gtIdx++) {
     if (!matchedGtIndices.has(gtIdx)) {
       const gtQ = gtQuestions[gtIdx];
-      missedIds.push(gtQ.id || `R${gtQ.row_index || '?'}`);
+      missedIds.push(gtQ.question_id || `R${gtQ.row_index || '?'}`);
     }
   }
 
@@ -1009,7 +1009,7 @@ function calculateDetailedMetrics(
   for (let appIdx = 0; appIdx < approachQuestions.length; appIdx++) {
     if (!matchedApproachIndices.has(appIdx)) {
       const approachQ = approachQuestions[appIdx];
-      extraIds.push(approachQ.id || (approachQ.row_index ? `R${approachQ.row_index}` : `E${extraIndex++}`));
+      extraIds.push(approachQ.question_id || (approachQ.row_index ? `R${approachQ.row_index}` : `E${extraIndex++}`));
     }
   }
 
@@ -1313,21 +1313,19 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
     return rows;
   }, [results, approachKeys, groundTruth, allColumnKeys]);
 
-  // Build mapping from question row_index (Excel row) to table row position (1-based)
-  // This is used to display dependencies correctly in the UI
+  // Build mapping from question_id (GUID) to table row position (1-based)
+  // Dependencies reference other questions by their GUID
   const questionIdToTableRow = useMemo(() => {
     const mapping = new Map<string, number>();
     
     comparisonData.forEach((row, index) => {
       const tableRowNum = index + 1; // 1-based table row
       
-      // For each question in the row, map its row_index to this table row
+      // For each question in the row, map its GUID to this table row
       Object.values(row.questions).forEach(question => {
-        if (question?.row_index !== undefined) {
-          const rowIndexStr = String(question.row_index);
-          // Only set if not already mapped (first occurrence wins)
-          if (!mapping.has(rowIndexStr)) {
-            mapping.set(rowIndexStr, tableRowNum);
+        if (question?.question_id) {
+          if (!mapping.has(question.question_id)) {
+            mapping.set(question.question_id, tableRowNum);
           }
         }
       });
@@ -2293,7 +2291,8 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                             const textColor = depAction === 'skip' ? '#7c3aed' : '#0284c7';
                             const depQuestionId = dep.depends_on_question_id;
                             const tableRowNum = depQuestionId ? questionIdToTableRow.get(depQuestionId) : undefined;
-                            const displayId = tableRowNum ? `table row #${tableRowNum}` : (depQuestionId ? `Excel row ${depQuestionId}` : '?');
+                            const displayId = tableRowNum !== undefined ? `table row #${tableRowNum}` : (depQuestionId ? `ref: ${depQuestionId}` : '?');
+                            const lookupFailed = tableRowNum === undefined && depQuestionId;
                             
                             return (
                               <div
@@ -2308,6 +2307,7 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                               >
                                 <div style={{ fontWeight: '600', color: textColor, marginBottom: '0.25rem' }}>
                                   {depAction.toUpperCase()}: Depends on {displayId}
+                                  {lookupFailed && <span style={{ fontSize: '0.7rem', opacity: 0.7 }}> (not in table)</span>}
                                 </div>
                                 {dep.depends_on_answer_value && (
                                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
@@ -2504,7 +2504,8 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                             const textColor = depAction === 'skip' ? '#7c3aed' : '#0284c7';
                             const depQuestionId = dep.depends_on_question_id;
                             const tableRowNum = depQuestionId ? questionIdToTableRow.get(depQuestionId) : undefined;
-                            const displayId = tableRowNum ? `table row #${tableRowNum}` : (depQuestionId ? `Excel row ${depQuestionId}` : '?');
+                            const displayId = tableRowNum !== undefined ? `table row #${tableRowNum}` : (depQuestionId ? `ref: ${depQuestionId}` : '?');
+                            const lookupFailed = tableRowNum === undefined && depQuestionId;
                             
                             return (
                               <div
@@ -2519,6 +2520,7 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                               >
                                 <div style={{ fontWeight: '600', color: textColor, marginBottom: '0.25rem' }}>
                                   {depAction.toUpperCase()}: Depends on {displayId}
+                                  {lookupFailed && <span style={{ fontSize: '0.7rem', opacity: 0.7 }}> (not in table)</span>}
                                 </div>
                                 {dep.depends_on_answer_value && (
                                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>

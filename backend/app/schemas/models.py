@@ -120,6 +120,9 @@ class QuestionDependency(BaseModel):
 class ExtractedQuestion(BaseModel):
     """A single extracted question."""
 
+    question_id: str | None = Field(
+        None, description="Unique identifier (GUID) for this question. Used for dependency references."
+    )
     question_text: str
     question_type: QuestionType
     answers: list[str] | None = Field(
