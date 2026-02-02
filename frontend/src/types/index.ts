@@ -4,7 +4,10 @@ export type QuestionType =
   | 'single_choice'
   | 'multiple_choice'
   | 'grouped_question'
-  | 'yes_no';
+  | 'yes_no'
+  | 'numeric'
+  | 'integer'
+  | 'decimal';
 
 /** Column mapping configuration */
 export interface ColumnMapping {
@@ -46,12 +49,22 @@ export type ModelType = 'opus-4.5' | 'sonnet-4.5';
 
 /** Extraction configuration */
 export interface ExtractionConfig {
-  approach: 1 | 2 | 3;
+  approach: 1 | 2 | 3 | 4;  // Primary approach (for backward compatibility)
+  approaches: (1 | 2 | 3 | 4)[];  // Selected approaches to run
   column_mappings?: ColumnMapping[];
   question_types?: QuestionType[];
-  run_all_approaches: boolean;
+  run_all_approaches: boolean;  // Kept for backward compatibility
   model: ModelType;
   compare_models: boolean;
+}
+
+/** Dependency information for conditional questions */
+export interface QuestionDependency {
+  depends_on_question_id?: string;
+  depends_on_answer_value?: string;
+  condition_type?: 'equals' | 'contains' | 'not_empty';
+  dependency_action?: 'show' | 'skip';
+  original_text?: string;
 }
 
 /** A single extracted question */
@@ -60,8 +73,12 @@ export interface ExtractedQuestion {
   question_text: string;
   question_type: QuestionType;
   answers?: string[];
+  help_text?: string;
+  conditional_inputs?: Record<string, string>; // Map of answer value to conditional input prompt
+  dependencies?: QuestionDependency[];
   confidence?: number;
   is_valid_question?: boolean;
+  validation_issues?: string[];
   row_index?: number;
   sheet_name?: string;
   is_problematic?: boolean;
@@ -79,6 +96,18 @@ export interface ExtractionMetrics {
   tokens_output?: number;
   avg_confidence?: number;
   low_confidence_count?: number;
+  // Pipeline-specific metrics (approach 4)
+  structure_analysis_time_ms?: number;
+  coverage_validation_time_ms?: number;
+  extraction_time_ms?: number;
+  normalization_time_ms?: number;
+  final_validation_time_ms?: number;
+  total_llm_calls?: number;
+  questions_marked_invalid?: number;
+  structure_confidence?: number;
+  coverage_confidence?: number;
+  show_dependencies_count?: number;
+  skip_dependencies_count?: number;
 }
 
 /** Result of a single extraction approach */

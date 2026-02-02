@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo, useCallback, memo, type ReactElement } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect, useState, useMemo, useCallback, memo, useRef, type ReactElement } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { runExtraction, getGroundTruthByFilename } from '../../api/client';
 import type { ExtractionConfig, ExtractionResponse, ExtractionResult, ExtractedQuestion, GroundTruth } from '../../types';
 
@@ -47,23 +47,12 @@ export function ResultsStep({
 }: ResultsStepProps) {
   const [selectedApproach, setSelectedApproach] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'individual' | 'comparison'>('individual');
-
-  const extractionMutation = useMutation({
-    mutationFn: () => runExtraction(fileId, config),
-    onSuccess: (data) => {
-      onResultsReceived(data);
-      // Select first approach by default
-      const firstKey = Object.keys(data.results)[0];
-      if (firstKey) setSelectedApproach(firstKey);
-      // Auto-switch to comparison view if multiple approaches
-      if (Object.keys(data.results).length > 1) {
-        setViewMode('comparison');
-      }
-    },
-    onError: (error: Error) => {
-      onError(error.message || 'Extraction failed');
-    },
-  });
+  const [isLoading, setIsLoading] = useState(!results);
+  const [error, setError] = useState<string | null>(null);
+  const [localResults, setLocalResults] = useState<ExtractionResponse | null>(null);
+  
+  // Ref to prevent double execution in React StrictMode
+  const hasTriggeredExtraction = useRef(false);
 
   // Fetch full ground truth data for comparison view
   const groundTruthDataQuery = useQuery({
@@ -72,12 +61,38 @@ export function ResultsStep({
     enabled: !!fileName,
   });
 
+  // Trigger extraction on mount if no results
   useEffect(() => {
-    if (!results) {
-      extractionMutation.mutate();
-    } else {
+    if (!results && !hasTriggeredExtraction.current) {
+      hasTriggeredExtraction.current = true;
+      setIsLoading(true);
+      setError(null);
+      
+      runExtraction(fileId, config)
+        .then((data) => {
+          setLocalResults(data);
+          setIsLoading(false);
+          onResultsReceived(data);
+          // Select first approach by default
+          const firstKey = Object.keys(data.results)[0];
+          if (firstKey) setSelectedApproach(firstKey);
+          // Auto-switch to comparison view if multiple approaches
+          if (Object.keys(data.results).length > 1) {
+            setViewMode('comparison');
+          }
+        })
+        .catch((err) => {
+          setIsLoading(false);
+          setError(err.message || 'Extraction failed');
+          onError(err.message || 'Extraction failed');
+        });
+    } else if (results && !selectedApproach) {
+      // Set selected approach from existing results
       const firstKey = Object.keys(results.results)[0];
-      if (firstKey && !selectedApproach) setSelectedApproach(firstKey);
+      if (firstKey) setSelectedApproach(firstKey);
+      if (Object.keys(results.results).length > 1) {
+        setViewMode('comparison');
+      }
     }
   }, []);
 
@@ -86,9 +101,13 @@ export function ResultsStep({
     if (groundTruthDataQuery.data && viewMode === 'individual') {
       setViewMode('comparison');
     }
-  }, [groundTruthDataQuery.data]);
+  }, [groundTruthDataQuery.data, viewMode]);
 
-  if (extractionMutation.isPending || !results) {
+  // Use results from props, or local results
+  const effectiveResults = results || localResults;
+
+  // Show loading while extraction is running
+  if (isLoading) {
     return (
       <div className="card">
         <div className="loading">
@@ -104,8 +123,53 @@ export function ResultsStep({
     );
   }
 
-  const approachKeys = Object.keys(results.results);
-  const comparison = results.comparison;
+  // If error or no results, show error with retry
+  if (error || !effectiveResults) {
+    return (
+      <div className="card">
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <p style={{ color: 'var(--error)', marginBottom: '1rem' }}>
+            {error || 'No results available'}
+          </p>
+          <button 
+            className="btn btn-primary" 
+            onClick={() => {
+              hasTriggeredExtraction.current = false;
+              setIsLoading(true);
+              setError(null);
+              runExtraction(fileId, config)
+                .then((data) => {
+                  setLocalResults(data);
+                  setIsLoading(false);
+                  onResultsReceived(data);
+                  const firstKey = Object.keys(data.results)[0];
+                  if (firstKey) setSelectedApproach(firstKey);
+                  if (Object.keys(data.results).length > 1) {
+                    setViewMode('comparison');
+                  }
+                })
+                .catch((err) => {
+                  setIsLoading(false);
+                  setError(err.message || 'Extraction failed');
+                });
+            }}
+          >
+            Retry Extraction
+          </button>
+          <button 
+            className="btn btn-secondary" 
+            onClick={onReset}
+            style={{ marginLeft: '0.5rem' }}
+          >
+            Start Over
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const approachKeys = Object.keys(effectiveResults.results);
+  const comparison = effectiveResults.comparison;
   const hasMultipleApproaches = approachKeys.length > 1;
   const hasGroundTruth = !!groundTruthDataQuery.data;
   // Show comparison view if multiple approaches OR ground truth exists
@@ -188,7 +252,7 @@ export function ResultsStep({
       {/* View mode content */}
       {viewMode === 'comparison' && canShowComparison ? (
         <ComparisonView 
-          results={results.results} 
+          results={effectiveResults.results} 
           approachKeys={approachKeys} 
           groundTruth={groundTruthDataQuery.data}
         />
@@ -204,15 +268,15 @@ export function ResultsStep({
                   onClick={() => setSelectedApproach(key)}
                   style={{ padding: '0.5rem 1rem', fontSize: '0.9rem' }}
                 >
-                  {formatResultKey(key, results.results[key])}
+                  {formatResultKey(key, effectiveResults.results[key])}
                 </button>
               ))}
             </div>
           )}
 
           {/* Selected approach results */}
-          {selectedApproach && results.results[selectedApproach] && (
-            <ApproachResults result={results.results[selectedApproach]} />
+          {selectedApproach && effectiveResults.results[selectedApproach] && (
+            <ApproachResults result={effectiveResults.results[selectedApproach]} />
           )}
         </>
       )}
@@ -231,7 +295,7 @@ export function ResultsStep({
           {isHistoricalView ? '← Back to History' : 'Start Over'}
         </button>
         <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-          Run ID: {results.run_id}
+          Run ID: {effectiveResults.run_id}
         </div>
       </div>
     </div>
@@ -361,6 +425,14 @@ function normalizeText(text: string): string {
     .trim();
 }
 
+/** Get full question text including help_text for comparison purposes */
+function getFullQuestionText(question: { question_text: string; help_text?: string | null }): string {
+  if (question.help_text) {
+    return `${question.question_text} ${question.help_text}`;
+  }
+  return question.question_text;
+}
+
 /** Calculate text similarity ratio (0.0 to 1.0) using longest common subsequence */
 function textSimilarity(text1: string, text2: string): number {
   const normalized1 = normalizeText(text1);
@@ -394,11 +466,382 @@ function longestCommonSubsequence(str1: string, str2: string): number {
   return dp[m][n];
 }
 
+/** Calculate answer similarity using Jaccard index (intersection / union) */
+/** Normalize answer text for comparison (removes punctuation, normalizes whitespace) */
+function normalizeAnswer(a: string): string {
+  return a.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function answerSimilarity(answers1: string[] | null | undefined, answers2: string[] | null | undefined): number {
+  const set1 = new Set((answers1 || []).map(normalizeAnswer));
+  const set2 = new Set((answers2 || []).map(normalizeAnswer));
+  
+  if (set1.size === 0 && set2.size === 0) return 1.0; // Both empty = match
+  if (set1.size === 0 || set2.size === 0) return 0.5; // One empty = partial
+  
+  const intersection = [...set1].filter(a => set2.has(a)).length;
+  const union = new Set([...set1, ...set2]).size;
+  
+  return union > 0 ? intersection / union : 0;
+}
+
 interface ComparisonViewProps {
   results: Record<string, ExtractionResult>;
   approachKeys: string[];
   groundTruth?: GroundTruth | null;
 }
+
+// Types for comparison row data
+interface ComparisonRowData {
+  id: string;
+  questions: Record<string, ExtractedQuestion | null>;
+  matchInfo: Record<string, { isFuzzy: boolean; similarity?: number }>;
+  isUnique: boolean;
+  hasDifferences: boolean;
+  inGroundTruth: boolean;
+  missingFromGroundTruth: boolean;
+  gtDuplicateRows: number[];
+}
+
+// Helper to determine cell color for an approach
+function getCellStyle(
+  row: ComparisonRowData,
+  approachKey: string,
+  hasGroundTruth: boolean
+): { background: string; borderColor?: string } {
+  const question = row.questions[approachKey];
+  const gtQuestion = row.questions['ground_truth'];
+  const matchInfo = row.matchInfo[approachKey];
+  const isFuzzyMatch = matchInfo?.isFuzzy || false;
+  
+  if (!hasGroundTruth) {
+    return { background: question ? 'white' : 'var(--bg-light)' };
+  }
+  
+  if (!question) {
+    if (gtQuestion) {
+      return { background: 'rgba(245, 101, 101, 0.15)', borderColor: 'var(--error)' };
+    }
+    return { background: 'var(--bg-light)' };
+  }
+  
+  if (!gtQuestion) {
+    return { background: 'rgba(245, 101, 101, 0.15)', borderColor: 'var(--error)' };
+  }
+  
+  const typeMatch = question.question_type === gtQuestion.question_type;
+  const gtAnswers = new Set((gtQuestion.answers || []).map(a => a.toLowerCase().trim()));
+  const approachAnswers = new Set((question.answers || []).map(a => a.toLowerCase().trim()));
+  const answerMatch = gtAnswers.size === 0 || 
+    (gtAnswers.size === approachAnswers.size && [...gtAnswers].every(a => approachAnswers.has(a)));
+  
+  if (isFuzzyMatch) {
+    if (typeMatch && answerMatch) {
+      return { background: 'rgba(72, 187, 120, 0.15)', borderColor: 'var(--success)' };
+    } else if (typeMatch || answerMatch) {
+      return { background: 'rgba(72, 187, 120, 0.2)', borderColor: 'var(--success)' };
+    } else {
+      return { background: 'rgba(72, 187, 120, 0.25)', borderColor: 'var(--success)' };
+    }
+  }
+  
+  if (typeMatch && answerMatch) {
+    return { background: 'rgba(72, 187, 120, 0.12)', borderColor: 'var(--success)' };
+  } else if (typeMatch || answerMatch) {
+    return { background: 'rgba(237, 137, 54, 0.15)', borderColor: 'var(--warning)' };
+  } else {
+    return { background: 'rgba(245, 101, 101, 0.15)', borderColor: 'var(--error)' };
+  }
+}
+
+// Memoized comparison rows component
+interface ComparisonRowsProps {
+  comparisonData: ComparisonRowData[];
+  approachKeys: string[];
+  results: Record<string, ExtractionResult>;
+  groundTruth?: GroundTruth | null;
+  onRowClick: (index: number) => void;
+}
+
+const ComparisonRows = memo(function ComparisonRows({ 
+  comparisonData, 
+  approachKeys, 
+  results, 
+  groundTruth, 
+  onRowClick 
+}: ComparisonRowsProps) {
+  // Build mapping from question row_index (Excel row) to table row position (1-based)
+  const questionIdToTableRow = useMemo(() => {
+    const mapping = new Map<string, number>();
+    
+    comparisonData.forEach((row, index) => {
+      const tableRowNum = index + 1; // 1-based table row
+      
+      // For each question in the row, map its row_index to this table row
+      Object.values(row.questions).forEach(question => {
+        if (question?.row_index !== undefined) {
+          const rowIndexStr = String(question.row_index);
+          // Only set if not already mapped (first occurrence wins)
+          if (!mapping.has(rowIndexStr)) {
+            mapping.set(rowIndexStr, tableRowNum);
+          }
+        }
+      });
+    });
+    
+    return mapping;
+  }, [comparisonData]);
+  
+  return (
+    <>
+      {comparisonData.map((row, index) => (
+        <ComparisonRow
+          key={row.id}
+          row={row}
+          index={index}
+          approachKeys={approachKeys}
+          results={results}
+          hasGroundTruth={!!groundTruth}
+          onRowClick={onRowClick}
+          questionIdToTableRow={questionIdToTableRow}
+        />
+      ))}
+    </>
+  );
+});
+
+// Memoized single row component
+interface ComparisonRowProps {
+  row: ComparisonRowData;
+  index: number;
+  approachKeys: string[];
+  results: Record<string, ExtractionResult>;
+  hasGroundTruth: boolean;
+  onRowClick: (index: number) => void;
+  questionIdToTableRow: Map<string, number>; // Maps "row_index" to table row (1-based)
+}
+
+const ComparisonRow = memo(function ComparisonRow({ 
+  row, 
+  index, 
+  approachKeys, 
+  results,
+  hasGroundTruth, 
+  onRowClick,
+  questionIdToTableRow,
+}: ComparisonRowProps) {
+  const gtQuestion = row.questions['ground_truth'];
+  const handleClick = useCallback(() => onRowClick(index), [onRowClick, index]);
+  
+  return (
+    <div 
+      className="comparison-row"
+      onClick={handleClick}
+      style={{ 
+        display: 'grid', 
+        gridTemplateColumns: `50px ${hasGroundTruth ? '1fr ' : ''}repeat(${approachKeys.length}, 1fr)`,
+        borderBottom: '1px solid var(--border)',
+        cursor: 'pointer',
+      }}
+    >
+      <div 
+        style={{ 
+          padding: '0.5rem', 
+          fontSize: '0.75rem', 
+          color: 'var(--text-secondary)',
+          display: 'flex',
+          alignItems: 'center',
+        }}
+        title={`Row ${index + 1}`}
+      >
+        {index + 1}
+      </div>
+      {/* Ground Truth column */}
+      {hasGroundTruth && (
+        <div 
+          style={{ 
+            padding: '0.5rem',
+            fontSize: '0.8125rem',
+            borderLeft: '1px solid var(--border)',
+            background: gtQuestion ? (row.gtDuplicateRows.length > 0 ? 'rgba(237, 137, 54, 0.1)' : 'white') : 'var(--bg-light)',
+          }}
+          title={gtQuestion ? gtQuestion.question_text : 'Not in ground truth'}
+        >
+          {gtQuestion ? (
+            <>
+              <div style={{ marginBottom: '0.25rem', lineHeight: '1.4' }}>
+                {gtQuestion.question_text.length > 200 
+                  ? gtQuestion.question_text.substring(0, 200) + '...'
+                  : gtQuestion.question_text}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span className="question-type" style={{ fontSize: '0.6875rem' }}>
+                  {gtQuestion.question_type}
+                </span>
+                {row.gtDuplicateRows.length > 0 && (
+                  <span 
+                    style={{ 
+                      fontSize: '0.625rem',
+                      background: 'var(--warning)',
+                      color: 'white',
+                      padding: '0.125rem 0.375rem',
+                      borderRadius: '3px',
+                      fontWeight: '600',
+                    }}
+                    title={`Duplicate: rows ${row.gtDuplicateRows.map(r => '#' + r).join(', ')}`}
+                  >
+                    DUP
+                  </span>
+                )}
+                {gtQuestion.is_problematic && (
+                  <span style={{ fontSize: '0.6875rem', color: 'var(--error)', fontWeight: '600' }}>
+                    ⚠️
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (
+            <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not in GT</span>
+          )}
+        </div>
+      )}
+      {/* Approach columns */}
+      {approachKeys.map(key => {
+        const question = row.questions[key];
+        const cellStyle = getCellStyle(row, key, hasGroundTruth);
+        const matchInfo = row.matchInfo[key];
+        
+        return (
+          <div 
+            key={key} 
+            style={{ 
+              padding: '0.5rem',
+              fontSize: '0.8125rem',
+              borderLeft: `2px solid ${cellStyle.borderColor || 'var(--border)'}`,
+              background: cellStyle.background,
+            }}
+            title={question ? getFullQuestionText(question) : 'Not found'}
+          >
+            {question ? (
+              <>
+                <div style={{ marginBottom: '0.25rem', lineHeight: '1.4' }}>
+                  {question.question_text.length > 200 
+                    ? question.question_text.substring(0, 200) + '...'
+                    : question.question_text}
+                  {/* Show help_text if present */}
+                  {question.help_text && (
+                    <span style={{ 
+                      color: 'var(--text-secondary)', 
+                      fontStyle: 'italic',
+                      fontSize: '0.75rem',
+                      display: 'block',
+                      marginTop: '0.125rem'
+                    }}>
+                      {question.help_text.length > 100 
+                        ? question.help_text.substring(0, 100) + '...'
+                        : question.help_text}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.25rem' }}>
+                  <span className="question-type" style={{ fontSize: '0.6875rem' }}>
+                    {question.question_type}
+                  </span>
+                  {matchInfo?.isFuzzy && (
+                    <span style={{ fontSize: '0.625rem', background: 'rgba(72, 187, 120, 0.9)', color: 'white', padding: '0.125rem 0.375rem', borderRadius: '3px', fontWeight: '600' }}>
+                      FUZZY
+                    </span>
+                  )}
+                  {hasGroundTruth && gtQuestion && question.question_type !== gtQuestion.question_type && (
+                    <span style={{ fontSize: '0.625rem', background: 'var(--warning)', color: 'white', padding: '0.125rem 0.375rem', borderRadius: '3px', fontWeight: '600' }}>
+                      TYPE
+                    </span>
+                  )}
+                  {/* Answer difference badge */}
+                  {hasGroundTruth && gtQuestion && (() => {
+                    const gtAnswerCount = gtQuestion.answers?.length || 0;
+                    const approachAnswerCount = question.answers?.length || 0;
+                    
+                    if (gtAnswerCount === 0 && approachAnswerCount === 0) return null;
+                    
+                    // Calculate match percentage using proper normalization (same as question matching)
+                    const gtSet = new Set((gtQuestion.answers || []).map(normalizeAnswer));
+                    const approachSet = new Set((question.answers || []).map(normalizeAnswer));
+                    const intersection = [...gtSet].filter(a => approachSet.has(a)).length;
+                    const matchPercent = gtSet.size > 0 ? Math.round((intersection / gtSet.size) * 100) : 100;
+                    
+                    const countDiffers = gtAnswerCount !== approachAnswerCount;
+                    const isFullMatch = matchPercent === 100 && !countDiffers;
+                    
+                    if (isFullMatch) return null; // Don't show badge if perfect match
+                    
+                    return (
+                      <span 
+                        style={{ 
+                          fontSize: '0.625rem',
+                          background: matchPercent === 0 ? 'var(--error)' : 'var(--warning)',
+                          color: 'white',
+                          padding: '0.125rem 0.375rem',
+                          borderRadius: '3px',
+                          fontWeight: '600',
+                        }}
+                        title={`Answers: ${intersection}/${gtSet.size} match. Approach has ${approachAnswerCount}, GT has ${gtAnswerCount}`}
+                      >
+                        ANS {countDiffers ? `${approachAnswerCount}/${gtAnswerCount}` : `${matchPercent}%`}
+                      </span>
+                    );
+                  })()}
+                  {hasGroundTruth && question && !gtQuestion && (
+                    <span style={{ fontSize: '0.625rem', background: 'var(--error)', color: 'white', padding: '0.125rem 0.375rem', borderRadius: '3px', fontWeight: '600' }}>
+                      EXTRA
+                    </span>
+                  )}
+                  {question.confidence !== undefined && key.includes('approach_3') && (
+                    <span style={{ fontSize: '0.6875rem', color: question.confidence >= 0.7 ? 'var(--success)' : 'var(--warning)' }}>
+                      {(question.confidence * 100).toFixed(0)}%
+                    </span>
+                  )}
+                  {/* Dependencies badges */}
+                  {question.dependencies && question.dependencies.length > 0 && question.dependencies.map((dep, depIdx) => {
+                    const depAction = dep.dependency_action || 'show';
+                    const depQuestionId = dep.depends_on_question_id;
+                    const bgColor = depAction === 'skip' ? '#8b5cf6' : '#0ea5e9'; // purple for skip, cyan for show
+                    
+                    // Map the question ID (Excel row_index) to table row position
+                    const tableRowNum = depQuestionId ? questionIdToTableRow.get(depQuestionId) : undefined;
+                    const displayId = tableRowNum ? `#${tableRowNum}` : (depQuestionId ? `row ${depQuestionId}` : '?');
+                    
+                    return (
+                      <span
+                        key={depIdx}
+                        style={{
+                          fontSize: '0.5625rem',
+                          background: bgColor,
+                          color: 'white',
+                          padding: '0.125rem 0.375rem',
+                          borderRadius: '3px',
+                          fontWeight: '600',
+                          textTransform: 'uppercase',
+                        }}
+                        title={`${depAction.toUpperCase()}: Depends on ${tableRowNum ? `table row #${tableRowNum}` : `Excel row ${depQuestionId || '?'}`} when "${dep.depends_on_answer_value || 'condition met'}"`}
+                      >
+                        {depAction === 'skip' ? 'SKIP' : 'DEP'}: {displayId}
+                      </span>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                {gtQuestion ? 'Missing' : 'Not found'}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
 
 // Convert ground truth questions to ExtractedQuestion format
 function groundTruthToExtractedQuestions(groundTruth: GroundTruth): ExtractedQuestion[] {
@@ -632,9 +1075,9 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
     if (groundTruth) {
       const gtQuestions = groundTruthToExtractedQuestions(groundTruth);
       
-      // First pass: build the duplicate map
+      // First pass: build the duplicate map (use full text including help_text)
       for (let gtIndex = 0; gtIndex < gtQuestions.length; gtIndex++) {
-        const gtNormalized = normalizeText(gtQuestions[gtIndex].question_text);
+        const gtNormalized = normalizeText(getFullQuestionText(gtQuestions[gtIndex]));
         if (!gtTextToRowIndices.has(gtNormalized)) {
           gtTextToRowIndices.set(gtNormalized, []);
         }
@@ -643,7 +1086,9 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
       
       for (let gtIndex = 0; gtIndex < gtQuestions.length; gtIndex++) {
         const gtQuestion = gtQuestions[gtIndex];
-        const gtNormalized = normalizeText(gtQuestion.question_text);
+        // Use full text (question_text + help_text) for matching
+        const gtFullText = getFullQuestionText(gtQuestion);
+        const gtNormalized = normalizeText(gtFullText);
         
         const rowQuestions: Record<string, ExtractedQuestion | null> = {
           'ground_truth': gtQuestion
@@ -658,42 +1103,76 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
             continue;
           }
           
-          // First pass: exact matching
+          // First pass: collect all exact text matches
           let matchedIndex = -1;
           let isFuzzyMatch = false;
           let similarity = 1.0;
           
+          const exactMatches: number[] = [];
           for (let i = 0; i < result.questions.length; i++) {
             if (matchedApproachQuestions[key].has(i)) continue;
             
-            const approachNormalized = normalizeText(result.questions[i].question_text);
+            // Use full text (question_text + help_text) for matching
+            const approachFullText = getFullQuestionText(result.questions[i]);
+            const approachNormalized = normalizeText(approachFullText);
             if (approachNormalized === gtNormalized) {
-              matchedIndex = i;
-              isFuzzyMatch = false;
-              similarity = 1.0;
-              break;
+              exactMatches.push(i);
             }
           }
           
+          // If multiple exact matches, use answer similarity to pick best
+          if (exactMatches.length === 1) {
+            matchedIndex = exactMatches[0];
+            isFuzzyMatch = false;
+            similarity = 1.0;
+          } else if (exactMatches.length > 1) {
+            // Pick the one with best answer similarity
+            let bestAnswerSim = -1;
+            for (const idx of exactMatches) {
+              const answerSim = answerSimilarity(gtQuestion.answers, result.questions[idx].answers);
+              if (answerSim > bestAnswerSim) {
+                bestAnswerSim = answerSim;
+                matchedIndex = idx;
+              }
+            }
+            isFuzzyMatch = false;
+            similarity = 1.0;
+          }
+          
           // Second pass: fuzzy matching if no exact match found
+          // Uses combined text + answer similarity score
           if (matchedIndex === -1) {
-            let bestSimilarity = 0;
+            let bestScore = 0;
             let bestIndex = -1;
+            let bestTextSimilarity = 0;
             
             for (let i = 0; i < result.questions.length; i++) {
               if (matchedApproachQuestions[key].has(i)) continue;
               
-              const sim = textSimilarity(gtQuestion.question_text, result.questions[i].question_text);
-              if (sim >= FUZZY_THRESHOLD && sim > bestSimilarity) {
-                bestSimilarity = sim;
+              // Use full text (question_text + help_text) for fuzzy matching
+              const approachFullText = getFullQuestionText(result.questions[i]);
+              const textSim = textSimilarity(gtFullText, approachFullText);
+              if (textSim < FUZZY_THRESHOLD) continue;
+              
+              const answerSim = answerSimilarity(gtQuestion.answers, result.questions[i].answers);
+              
+              // Combined score: weight text more if answers are missing
+              const hasAnswers = (gtQuestion.answers?.length || 0) > 0;
+              const combinedScore = hasAnswers 
+                ? textSim * 0.5 + answerSim * 0.5 
+                : textSim;
+              
+              if (combinedScore > bestScore) {
+                bestScore = combinedScore;
                 bestIndex = i;
+                bestTextSimilarity = textSim;
               }
             }
             
             if (bestIndex >= 0) {
               matchedIndex = bestIndex;
               isFuzzyMatch = true;
-              similarity = bestSimilarity;
+              similarity = bestTextSimilarity;
             }
           }
           
@@ -833,6 +1312,29 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
     
     return rows;
   }, [results, approachKeys, groundTruth, allColumnKeys]);
+
+  // Build mapping from question row_index (Excel row) to table row position (1-based)
+  // This is used to display dependencies correctly in the UI
+  const questionIdToTableRow = useMemo(() => {
+    const mapping = new Map<string, number>();
+    
+    comparisonData.forEach((row, index) => {
+      const tableRowNum = index + 1; // 1-based table row
+      
+      // For each question in the row, map its row_index to this table row
+      Object.values(row.questions).forEach(question => {
+        if (question?.row_index !== undefined) {
+          const rowIndexStr = String(question.row_index);
+          // Only set if not already mapped (first occurrence wins)
+          if (!mapping.has(rowIndexStr)) {
+            mapping.set(rowIndexStr, tableRowNum);
+          }
+        }
+      });
+    });
+    
+    return mapping;
+  }, [comparisonData]);
 
   // Stats
   const totalUnique = comparisonData.filter(r => r.isUnique).length;
@@ -1464,350 +1966,14 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
           ))}
         </div>
 
-        {/* Rows */}
-        {comparisonData.map((row, index) => {
-          const gtQuestion = row.questions['ground_truth'];
-          
-          // Helper to determine cell color for an approach
-          const getCellStyle = (approachKey: string) => {
-            const question = row.questions[approachKey];
-            const matchInfo = row.matchInfo[approachKey];
-            const isFuzzyMatch = matchInfo?.isFuzzy || false;
-            
-            if (!groundTruth) {
-              // No ground truth - use old logic
-              return { background: question ? 'white' : 'var(--bg-light)' };
-            }
-            
-            if (!question) {
-              // Question not found by this approach
-              if (gtQuestion) {
-                // Missing from GT - red
-                return { background: 'rgba(245, 101, 101, 0.15)', borderColor: 'var(--error)' };
-              }
-              return { background: 'var(--bg-light)' };
-            }
-            
-            if (!gtQuestion) {
-              // Extra question not in GT - red
-              return { background: 'rgba(245, 101, 101, 0.15)', borderColor: 'var(--error)' };
-            }
-            
-            // Both exist - check for type and answer matches
-            const typeMatch = question.question_type === gtQuestion.question_type;
-            const gtAnswers = new Set((gtQuestion.answers || []).map(a => a.toLowerCase().trim()));
-            const approachAnswers = new Set((question.answers || []).map(a => a.toLowerCase().trim()));
-            const answerMatch = gtAnswers.size === 0 || 
-              (gtAnswers.size === approachAnswers.size && [...gtAnswers].every(a => approachAnswers.has(a)));
-            
-            // If fuzzy match, use greenish background
-            if (isFuzzyMatch) {
-              if (typeMatch && answerMatch) {
-                // Fuzzy match but type and answers match - light green
-                return { background: 'rgba(72, 187, 120, 0.15)', borderColor: 'var(--success)' };
-              } else if (typeMatch || answerMatch) {
-                // Fuzzy match, partial type/answer match - medium green
-                return { background: 'rgba(72, 187, 120, 0.2)', borderColor: 'var(--success)' };
-              } else {
-                // Fuzzy match but type/answers differ - darker green
-                return { background: 'rgba(72, 187, 120, 0.25)', borderColor: 'var(--success)' };
-              }
-            }
-            
-            // Exact text match
-            if (typeMatch && answerMatch) {
-              // Perfect match - green
-              return { background: 'rgba(72, 187, 120, 0.12)', borderColor: 'var(--success)' };
-            } else if (typeMatch || answerMatch) {
-              // Partial match - orange
-              return { background: 'rgba(237, 137, 54, 0.15)', borderColor: 'var(--warning)' };
-            } else {
-              // No match - red
-              return { background: 'rgba(245, 101, 101, 0.15)', borderColor: 'var(--error)' };
-            }
-          };
-          
-          return (
-            <div 
-              key={row.id}
-              onClick={() => setSelectedRowIndex(index)}
-              style={{ 
-                display: 'grid', 
-                gridTemplateColumns: `50px ${groundTruth ? '1fr ' : ''}repeat(${approachKeys.length}, 1fr)`,
-                borderBottom: '1px solid var(--border)',
-                background: 'white',
-                cursor: 'pointer',
-                transition: 'background 0.15s'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-light)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'white';
-              }}
-            >
-              <div 
-                style={{ 
-                  padding: '0.5rem', 
-                  fontSize: '0.75rem', 
-                  color: 'var(--text-secondary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  cursor: 'help'
-                }}
-                title={`Row ${index + 1}`}
-              >
-                {index + 1}
-              </div>
-              {/* Ground Truth column */}
-              {groundTruth && (() => {
-                const question = gtQuestion;
-                const duplicateRows = row.gtDuplicateRows;
-                return (
-                  <div 
-                    style={{ 
-                      padding: '0.5rem',
-                      fontSize: '0.8125rem',
-                      borderLeft: '1px solid var(--border)',
-                      background: question ? (duplicateRows.length > 0 ? 'rgba(237, 137, 54, 0.1)' : 'white') : 'var(--bg-light)',
-                      cursor: question ? 'help' : 'default'
-                    }}
-                    title={question ? question.question_text : 'Not in ground truth'}
-                  >
-                  {question ? (
-                    <>
-                      <div style={{ marginBottom: '0.25rem', lineHeight: '1.4' }}>
-                        {question.question_text.length > 200 
-                          ? question.question_text.substring(0, 200) + '...'
-                          : question.question_text}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <span className="question-type" style={{ fontSize: '0.6875rem' }}>
-                          {question.question_type}
-                        </span>
-                        {duplicateRows.length > 0 && (
-                          <span 
-                            style={{ 
-                              fontSize: '0.625rem',
-                              background: 'var(--warning)',
-                              color: 'white',
-                              padding: '0.125rem 0.375rem',
-                              borderRadius: '3px',
-                              fontWeight: '600',
-                              cursor: 'help'
-                            }}
-                            title={`Duplicate question - same text as row${duplicateRows.length > 1 ? 's' : ''}: ${duplicateRows.map(r => '#' + r).join(', ')}`}
-                          >
-                            DUP #{duplicateRows.join(', #')}
-                          </span>
-                        )}
-                        {question.is_problematic && (
-                          <span 
-                            style={{ 
-                              fontSize: '0.6875rem',
-                              color: 'var(--error)',
-                              fontWeight: '600',
-                              cursor: question.problematic_comment ? 'help' : 'default'
-                            }}
-                            title={question.problematic_comment || 'Marked as problematic'}
-                          >
-                            ⚠️ Problematic
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                      Not in GT
-                    </span>
-                  )}
-                  </div>
-                );
-              })()}
-              {approachKeys.map(key => {
-                const question = row.questions[key];
-                const cellStyle = getCellStyle(key);
-                const matchInfo = row.matchInfo[key];
-                
-                // Determine difference indicators/badges
-                const badges: ReactElement[] = [];
-                if (groundTruth && question && gtQuestion) {
-                  // Check if this is a fuzzy match
-                  if (matchInfo?.isFuzzy) {
-                    const similarityPercent = matchInfo.similarity 
-                      ? `${(matchInfo.similarity * 100).toFixed(0)}%`
-                      : '~';
-                    badges.push(
-                      <span 
-                        key="fuzzy-match"
-                        style={{ 
-                          fontSize: '0.625rem',
-                          background: 'rgba(72, 187, 120, 0.9)',
-                          color: 'white',
-                          padding: '0.125rem 0.375rem',
-                          borderRadius: '3px',
-                          marginLeft: '0.25rem',
-                          fontWeight: '600',
-                          display: 'inline-block',
-                          lineHeight: '1.2'
-                        }}
-                        title={`Fuzzy match - text similarity: ${similarityPercent}. Question text differs but is similar enough to be considered a match.`}
-                      >
-                        FUZZY {similarityPercent}
-                      </span>
-                    );
-                  } else {
-                    // Check text match for exact matches
-                    const textMatch = normalizeText(question.question_text) === normalizeText(gtQuestion.question_text);
-                    if (!textMatch) {
-                      badges.push(
-                        <span 
-                          key="text-diff"
-                          style={{ 
-                            fontSize: '0.625rem',
-                            background: 'var(--error)',
-                            color: 'white',
-                            padding: '0.125rem 0.375rem',
-                            borderRadius: '3px',
-                            marginLeft: '0.25rem',
-                            fontWeight: '600',
-                            display: 'inline-block',
-                            lineHeight: '1.2'
-                          }}
-                          title="Question text differs from ground truth"
-                        >
-                          TEXT
-                        </span>
-                      );
-                    }
-                  }
-                  
-                  // Check type match
-                  const typeMatch = question.question_type === gtQuestion.question_type;
-                  if (!typeMatch) {
-                    badges.push(
-                      <span 
-                        key="type-diff"
-                        style={{ 
-                          fontSize: '0.625rem',
-                          background: 'var(--warning)',
-                          color: 'white',
-                          padding: '0.125rem 0.375rem',
-                          borderRadius: '3px',
-                          marginLeft: '0.25rem',
-                          fontWeight: '600',
-                          display: 'inline-block',
-                          lineHeight: '1.2'
-                        }}
-                        title={`Type differs: got ${question.question_type}, expected ${gtQuestion.question_type}`}
-                      >
-                        TYPE
-                      </span>
-                    );
-                  }
-                  
-                  // Check answer match
-                  if (gtQuestion.answers && gtQuestion.answers.length > 0) {
-                    const gtAnswers = new Set(gtQuestion.answers.map(a => a.toLowerCase().trim()));
-                    const approachAnswers = new Set((question.answers || []).map(a => a.toLowerCase().trim()));
-                    const answerMatch = gtAnswers.size === approachAnswers.size && 
-                      [...gtAnswers].every(a => approachAnswers.has(a));
-                    
-                    if (!answerMatch) {
-                      badges.push(
-                        <span 
-                          key="answer-diff"
-                          style={{ 
-                            fontSize: '0.625rem',
-                            background: 'var(--warning)',
-                            color: 'white',
-                            padding: '0.125rem 0.375rem',
-                            borderRadius: '3px',
-                            marginLeft: '0.25rem',
-                            fontWeight: '600',
-                            display: 'inline-block',
-                            lineHeight: '1.2'
-                          }}
-                          title="Answer options differ from ground truth"
-                        >
-                          ANSWERS
-                        </span>
-                      );
-                    }
-                  }
-                } else if (groundTruth && question && !gtQuestion) {
-                  // Extra question not in GT
-                  badges.push(
-                    <span 
-                      key="extra"
-                      style={{ 
-                        fontSize: '0.625rem',
-                        background: 'var(--error)',
-                        color: 'white',
-                        padding: '0.125rem 0.375rem',
-                        borderRadius: '3px',
-                        marginLeft: '0.25rem',
-                        fontWeight: '600',
-                        display: 'inline-block',
-                        lineHeight: '1.2'
-                      }}
-                      title="Extra question not in ground truth"
-                    >
-                      EXTRA
-                    </span>
-                  );
-                }
-                
-                return (
-                  <div 
-                    key={key} 
-                    style={{ 
-                      padding: '0.5rem',
-                      fontSize: '0.8125rem',
-                      borderLeft: `2px solid ${cellStyle.borderColor || 'var(--border)'}`,
-                      background: cellStyle.background,
-                      cursor: question ? 'help' : 'default'
-                    }}
-                    title={question ? question.question_text : 'Not found in this approach'}
-                  >
-                    {question ? (
-                      <>
-                        <div style={{ marginBottom: '0.25rem', lineHeight: '1.4' }}>
-                          {question.question_text.length > 200 
-                            ? question.question_text.substring(0, 200) + '...'
-                            : question.question_text}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.25rem' }}>
-                          <span className="question-type" style={{ fontSize: '0.6875rem' }}>
-                            {question.question_type}
-                          </span>
-                          {badges}
-                          {/* Only show confidence for approach 3 */}
-                          {question.confidence !== undefined && key.includes('approach_3') && (
-                            <span 
-                              style={{ 
-                                marginLeft: '0.25rem', 
-                                fontSize: '0.6875rem',
-                                color: question.confidence >= 0.7 ? 'var(--success)' : 'var(--warning)'
-                              }}
-                              title={`Confidence: ${(question.confidence * 100).toFixed(1)}%`}
-                            >
-                              {(question.confidence * 100).toFixed(0)}%
-                            </span>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                        {gtQuestion ? 'Missing' : 'Not found'}
-                      </span>
-                    )}
-                  </div>
-              );
-            })}
-          </div>
-          );
-        })}
+        {/* Rows - memoized to prevent re-renders when modal opens/closes */}
+        <ComparisonRows 
+          comparisonData={comparisonData}
+          approachKeys={approachKeys}
+          results={results}
+          groundTruth={groundTruth}
+          onRowClick={setSelectedRowIndex}
+        />
       </div>
 
       {/* Detail Modal */}
@@ -1819,6 +1985,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
           results={results}
           groundTruth={groundTruth}
           onClose={handleCloseModal}
+          questionIdToTableRow={questionIdToTableRow}
         />
       )}
     </div>
@@ -1841,10 +2008,11 @@ interface QuestionDetailModalProps {
   results: Record<string, ExtractionResult>;
   groundTruth?: GroundTruth | null;
   onClose: () => void;
+  questionIdToTableRow: Map<string, number>;
 }
 
 // Memoize the modal component to prevent unnecessary re-renders
-const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth, onClose }: QuestionDetailModalProps) {
+const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, approachKeys, results, groundTruth, onClose, questionIdToTableRow }: QuestionDetailModalProps) {
   // Close on escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -2039,10 +2207,27 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                     <div style={{ 
                       fontSize: '0.9375rem',
                       lineHeight: '1.6',
-                      marginBottom: '1rem',
+                      marginBottom: question.help_text ? '0.5rem' : '1rem',
                     }}>
                       {question.question_text}
                     </div>
+
+                    {/* Help text / Instructions if present */}
+                    {question.help_text && (
+                      <div style={{ 
+                        fontSize: '0.8125rem',
+                        lineHeight: '1.5',
+                        marginBottom: '1rem',
+                        padding: '0.5rem 0.75rem',
+                        background: 'var(--bg-light)',
+                        borderRadius: '4px',
+                        color: 'var(--text-secondary)',
+                        fontStyle: 'italic',
+                        borderLeft: '3px solid var(--primary)',
+                      }}>
+                        {question.help_text}
+                      </div>
+                    )}
 
                     {/* Type */}
                     <div style={{ marginBottom: '0.75rem' }}>
@@ -2087,6 +2272,55 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                       </div>
                     )}
 
+                    {/* Dependencies */}
+                    {question.dependencies && question.dependencies.length > 0 && (
+                      <div style={{ marginBottom: '0.75rem' }}>
+                        <div style={{ 
+                          fontSize: '0.6875rem', 
+                          fontWeight: '500', 
+                          color: 'var(--text-secondary)',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          marginBottom: '0.5rem'
+                        }}>
+                          Dependencies ({question.dependencies.length})
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {question.dependencies.map((dep, depIdx) => {
+                            const depAction = dep.dependency_action || 'show';
+                            const bgColor = depAction === 'skip' ? 'rgba(139, 92, 246, 0.15)' : 'rgba(14, 165, 233, 0.15)';
+                            const borderColor = depAction === 'skip' ? '#8b5cf6' : '#0ea5e9';
+                            const textColor = depAction === 'skip' ? '#7c3aed' : '#0284c7';
+                            const depQuestionId = dep.depends_on_question_id;
+                            const tableRowNum = depQuestionId ? questionIdToTableRow.get(depQuestionId) : undefined;
+                            const displayId = tableRowNum ? `table row #${tableRowNum}` : (depQuestionId ? `Excel row ${depQuestionId}` : '?');
+                            
+                            return (
+                              <div
+                                key={depIdx}
+                                style={{
+                                  padding: '0.5rem 0.75rem',
+                                  background: bgColor,
+                                  borderLeft: `3px solid ${borderColor}`,
+                                  borderRadius: '4px',
+                                  fontSize: '0.8125rem',
+                                }}
+                              >
+                                <div style={{ fontWeight: '600', color: textColor, marginBottom: '0.25rem' }}>
+                                  {depAction.toUpperCase()}: Depends on {displayId}
+                                </div>
+                                {dep.depends_on_answer_value && (
+                                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                                    When: "{dep.depends_on_answer_value}"
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Problematic indicator */}
                     {question.is_problematic && (
                       <div style={{ 
@@ -2102,7 +2336,7 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                           color: 'var(--error)',
                           marginBottom: question.problematic_comment ? '0.5rem' : 0,
                         }}>
-                          ⚠️ MARKED AS PROBLEMATIC
+                          MARKED AS PROBLEMATIC
                         </div>
                         {question.problematic_comment && (
                           <div style={{ 
@@ -2190,6 +2424,19 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                         borderRadius: '6px',
                       }}>
                         {question.question_text}
+                        {/* Help text / Instructions if present */}
+                        {question.help_text && (
+                          <div style={{ 
+                            marginTop: '0.5rem',
+                            paddingTop: '0.5rem',
+                            borderTop: '1px solid var(--border)',
+                            fontSize: '0.8125rem',
+                            color: 'var(--text-secondary)',
+                            fontStyle: 'italic',
+                          }}>
+                            {question.help_text}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -2233,6 +2480,55 @@ const QuestionDetailModal = memo(function QuestionDetailModal({ row, rowIndex, a
                             <li key={i} style={{ marginBottom: '0.25rem' }}>{answer}</li>
                           ))}
                         </ul>
+                      </div>
+                    )}
+
+                    {/* Dependencies */}
+                    {question.dependencies && question.dependencies.length > 0 && (
+                      <div style={{ marginBottom: '1rem' }}>
+                        <div style={{ 
+                          fontSize: '0.6875rem', 
+                          fontWeight: '500', 
+                          color: 'var(--text-secondary)',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          marginBottom: '0.5rem'
+                        }}>
+                          Dependencies ({question.dependencies.length})
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {question.dependencies.map((dep, depIdx) => {
+                            const depAction = dep.dependency_action || 'show';
+                            const bgColor = depAction === 'skip' ? 'rgba(139, 92, 246, 0.15)' : 'rgba(14, 165, 233, 0.15)';
+                            const borderColor = depAction === 'skip' ? '#8b5cf6' : '#0ea5e9';
+                            const textColor = depAction === 'skip' ? '#7c3aed' : '#0284c7';
+                            const depQuestionId = dep.depends_on_question_id;
+                            const tableRowNum = depQuestionId ? questionIdToTableRow.get(depQuestionId) : undefined;
+                            const displayId = tableRowNum ? `table row #${tableRowNum}` : (depQuestionId ? `Excel row ${depQuestionId}` : '?');
+                            
+                            return (
+                              <div
+                                key={depIdx}
+                                style={{
+                                  padding: '0.5rem 0.75rem',
+                                  background: bgColor,
+                                  borderLeft: `3px solid ${borderColor}`,
+                                  borderRadius: '4px',
+                                  fontSize: '0.8125rem',
+                                }}
+                              >
+                                <div style={{ fontWeight: '600', color: textColor, marginBottom: '0.25rem' }}>
+                                  {depAction.toUpperCase()}: Depends on {displayId}
+                                </div>
+                                {dep.depends_on_answer_value && (
+                                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                                    When: "{dep.depends_on_answer_value}"
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
 

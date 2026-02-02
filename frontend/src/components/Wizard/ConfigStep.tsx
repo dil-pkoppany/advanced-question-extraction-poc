@@ -123,12 +123,30 @@ export function ConfigStep({
     (m) => includedSheets.has(m.sheet_name) && m.question_column
   );
 
+  // Determine which selected approaches need config
+  const approachesNeedingConfig = (config.approaches || [config.approach])
+    .filter(a => a === 2 || a === 3)
+    .map(a => a === 2 ? 'Approach 2 (User-Guided)' : 'Approach 3 (Deterministic + Judge)');
+
   return (
     <div className="card">
       <div className="card-header">
         <span style={{ fontSize: '1.5rem' }}>⚙️</span>
         <h2>Configure Column Mappings</h2>
       </div>
+
+      {approachesNeedingConfig.length > 0 && (
+        <p style={{ 
+          color: 'var(--text-secondary)', 
+          marginBottom: '1rem', 
+          fontSize: '0.9rem',
+          background: 'rgba(102, 126, 234, 0.1)',
+          padding: '0.75rem 1rem',
+          borderRadius: '6px'
+        }}>
+          Column mappings are required for: <strong>{approachesNeedingConfig.join(', ')}</strong>
+        </p>
+      )}
 
       {/* Sheet/column mappings */}
       <div style={{ marginTop: '1.5rem' }}>

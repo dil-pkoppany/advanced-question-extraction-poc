@@ -15,6 +15,9 @@ class QuestionType(str, Enum):
     MULTIPLE_CHOICE = "multiple_choice"
     GROUPED_QUESTION = "grouped_question"
     YES_NO = "yes_no"
+    NUMERIC = "numeric"  # For number inputs
+    INTEGER = "integer"  # For whole numbers only
+    DECIMAL = "decimal"  # For decimal numbers
 
 
 class ColumnMapping(BaseModel):
@@ -71,8 +74,11 @@ class ModelType(str, Enum):
 class ExtractionConfig(BaseModel):
     """Configuration for running an extraction."""
 
-    approach: Literal[1, 2, 3] = Field(
-        ..., description="Extraction approach to use (1=auto, 2=guided, 3=judge)"
+    approach: Literal[1, 2, 3, 4] = Field(
+        ..., description="Primary extraction approach (for backward compatibility)"
+    )
+    approaches: list[Literal[1, 2, 3, 4]] | None = Field(
+        None, description="List of approaches to run for comparison"
     )
     column_mappings: list[ColumnMapping] | None = Field(
         None, description="Column mappings (required for approaches 2 and 3)"
@@ -81,13 +87,33 @@ class ExtractionConfig(BaseModel):
         None, description="Question types to extract (for approach 2)"
     )
     run_all_approaches: bool = Field(
-        default=False, description="Run all approaches for comparison"
+        default=False, description="Run all approaches for comparison (deprecated, use approaches list)"
     )
     model: ModelType = Field(
         default=ModelType.OPUS_4_5, description="LLM model to use for extraction"
     )
     compare_models: bool = Field(
         default=False, description="Run with both models for comparison"
+    )
+
+
+class QuestionDependency(BaseModel):
+    """Dependency information for conditional questions."""
+
+    depends_on_question_id: str | None = Field(
+        None, description="Reference to another question (by ID or row)"
+    )
+    depends_on_answer_value: str | None = Field(
+        None, description="Specific answer value that triggers this dependency"
+    )
+    condition_type: Literal["equals", "contains", "not_empty"] = Field(
+        default="equals", description="Type of condition to check"
+    )
+    dependency_action: Literal["show", "skip"] = Field(
+        default="show", description="Show question if condition met, or skip if condition met"
+    )
+    original_text: str | None = Field(
+        None, description="Original dependency description text from source"
     )
 
 
@@ -99,14 +125,28 @@ class ExtractedQuestion(BaseModel):
     answers: list[str] | None = Field(
         None, description="Answer options if applicable"
     )
+    help_text: str | None = Field(
+        None, description="Instructions/comments separated from question text (approach 4)"
+    )
+    conditional_inputs: dict[str, str] | None = Field(
+        None, 
+        description="Map of answer values to their conditional input requirements. "
+        "Example: {'Yes': 'please provide detail'} means if user selects 'Yes', show a text input with this prompt."
+    )
+    dependencies: list[QuestionDependency] | None = Field(
+        None, description="Dependency information for conditional questions (approach 4)"
+    )
     confidence: float | None = Field(
-        None, description="Confidence score (0-1) from LLM judge (approach 3)"
+        None, description="Confidence score (0-1) from LLM judge (approaches 3, 4)"
     )
     is_valid_question: bool | None = Field(
-        None, description="Judge assessment: is this a real question?"
+        None, description="Judge assessment: is this a real question? (approaches 3, 4)"
+    )
+    validation_issues: list[str] | None = Field(
+        None, description="List of issues identified by judge (approach 4)"
     )
     row_index: int | None = Field(
-        None, description="Source row in Excel (approaches 2, 3)"
+        None, description="Source row in Excel (approaches 2, 3, 4)"
     )
     sheet_name: str | None = Field(None, description="Source sheet name")
 
@@ -129,7 +169,41 @@ class ExtractionMetrics(BaseModel):
         None, description="Mean confidence (approach 3)"
     )
     low_confidence_count: int | None = Field(
-        None, description="Items below threshold (approach 3)"
+        None, description="Items below threshold (approaches 3, 4)"
+    )
+    # Pipeline-specific metrics (approach 4)
+    structure_analysis_time_ms: int | None = Field(
+        None, description="Step 1 duration (approach 4)"
+    )
+    coverage_validation_time_ms: int | None = Field(
+        None, description="Step 2 duration (approach 4)"
+    )
+    extraction_time_ms: int | None = Field(
+        None, description="Step 3 duration (approach 4)"
+    )
+    normalization_time_ms: int | None = Field(
+        None, description="Step 4 duration (approach 4)"
+    )
+    final_validation_time_ms: int | None = Field(
+        None, description="Step 5 duration (approach 4)"
+    )
+    total_llm_calls: int | None = Field(
+        None, description="Total LLM invocations (approach 4)"
+    )
+    questions_marked_invalid: int | None = Field(
+        None, description="Count marked as invalid but not filtered (approach 4)"
+    )
+    structure_confidence: float | None = Field(
+        None, description="Confidence from structure analysis (approach 4)"
+    )
+    coverage_confidence: float | None = Field(
+        None, description="Confidence from coverage validation (approach 4)"
+    )
+    show_dependencies_count: int | None = Field(
+        None, description="Count of questions with show dependencies (approach 4)"
+    )
+    skip_dependencies_count: int | None = Field(
+        None, description="Count of questions with skip dependencies (approach 4)"
     )
 
 

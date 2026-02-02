@@ -35,9 +35,9 @@ class JudgeExtractionService:
     def __init__(self, model_id: str | None = None):
         self.settings = get_settings()
         self.parser = ExcelParser()
-        # For approach 3, we always use the judge model (Haiku) regardless of model_id param
-        # This is intentional - approach 3 is about fast validation, not extraction quality
-        self.model_id = self.settings.bedrock_judge_model_id
+        # For approach 3, we always use Sonnet 4.5 for validation regardless of model_id param
+        # This provides good balance of speed and quality for validation
+        self.model_id = self.settings.bedrock_sonnet_model_id
 
         # Initialize Bedrock client for judge model
         config = Config(
@@ -221,10 +221,13 @@ Respond in JSON format:
 Evaluate ALL {len(questions)} items. Return ONLY the JSON."""
 
     async def _invoke_judge(self, prompt: str) -> str:
-        """Invoke the judge model (smaller/faster)."""
+        """Invoke the judge model (Sonnet 4.5)."""
+        # Sonnet 4.5 supports up to 16K output tokens
+        max_tokens = 16384 if "sonnet" in self.model_id.lower() else self.settings.judge_max_tokens
+        
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": self.settings.judge_max_tokens,
+            "max_tokens": max_tokens,
             "temperature": self.settings.judge_temperature,
             "messages": [{"role": "user", "content": prompt}],
         }

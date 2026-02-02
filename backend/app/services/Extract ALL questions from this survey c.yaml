@@ -1,0 +1,277 @@
+Extract ALL questions from this survey content.
+
+USER-PROVIDED STRUCTURE INFORMATION:
+
+Sheet: ESG DDQ
+  - Question column: Column_5
+  - Answer column: Column_6
+  - Data starts at row: 2
+
+Sheet: Planet - People - Performance
+  - Question column: Column_6
+  - Data starts at row: 2
+
+Sheet: EU Taxonomy Alignment
+  - Question column: Column_5
+  - Data starts at row: 2
+
+Sheet: SFDR Reporting (Companies)
+  - Question column: Column_6
+  - Data starts at row: 2
+
+
+EXPECTED QUESTION TYPES: open_ended, multiple_choice, yes_no
+
+EXPECTED COUNT: Approximately 65 questions should be extracted.
+
+EXTRACTION RULES
+
+Focus on the columns specified above. The question text is in the "Column_5" column.
+
+EXTRACT EVERY ROW: Each row in the question column represents one question. Extract all 65 rows.
+
+ANSWER OPTIONS: If answers are in a separate column, include them after the question in parentheses, separated by "|".
+
+CATEGORIES:
+- open_ended: No answer options
+- single_choice: Has answer options, only one can be selected
+- multiple_choice: Has answer options, multiple can be selected
+- grouped_question: Has subquestions
+- yes_no: Yes/No only
+
+CONTENT:
+## ESG DDQ
+| Unnamed: 0 | Unnamed: 1 | Unnamed: 2 | Unnamed: 3 | Unnamed: 4 | Unnamed: 5 | Unnamed: 6 | Unnamed: 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| - | - | - | - | - | - | - | - |
+| - | - | - | GLOBAL Parent - INVESTING | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | ESG Due Diligence Questionnaire | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | Global PLC - Parent Energy Generation routinely undertakes due diligence procedures on all companies with which we seek to engage in business relations. This process is designed to ensure that Parent is comfortable with the arrangements and affairs of companies that it transacts with, in order to protect their customers’ interests.\n\nThis questionnaire may be supplementary to others such as the F01 Pre-Qualification Questionnaire which covers safety and design, environmental, quality and additional references.\n\nINSTRUCTIONS FOR COMPLETION:\nPlease answer all of the questions by CHECKING ALL OF THE BOXES THAT APPLY and PROVIDING FURTHER COMMENTS or copies of supporting evidence in the "Company answer & links" column. Please note that an empty checkbox indicates that the company does not comply with the statement. Where a question does not apply, please leave the checkbox blank and comment "N/A" together with a reason why it does not apply in the "Company comments & links" column. We may ask you to review your answers on an annual basis. | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | Company Contact | - | Company Response | - | - |
+| - | - | - | Company Name | Company Name | - | - | - |
+| - | - | - | Website Address | Website Address | - | - | - |
+| - | - | - | Main point of contact (name and job title) | Main point of contact (individual and job title) | - | - | - |
+| - | - | - | E-mail address | E-mail address | - | - | - |
+| - | - | - | Date of Completion/Latest Review | Date of Completion/Latest Review | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - |
+| - | - | - | Question | - | Company Response (please tick all that apply) | Company answer & links | Global PLC - Parent follow-up questions |
+| - | - | - | 1 | Are you subject to regulation by a governing body (e.g. industry regulator)? | False | Yes (please detail) | - |
+| - | - | - | - | - | True | No | - |
+| - | - | - | 2 | Policies help us to understand a company's mission, values and culture and also show that legal requirements are being met.\n\nWhich of the following policies do you have? Please provide copies/links.\n\nIf you do not have a policy, please summarise the processes or arrangements you have in place to address these topics in your company in the "Answer & Links" column. | False | Anti-bribery/corruption | - |
+| - | - | - | - | - | False | Anti fraud/tax evasion | - |
+| - | - | - | - | - | False | Equal Opportunities | - |
+| - | - | - | - | - | False | Conflict of Interest | - |
+| - | - | - | - | - | False | Human resource (informs workers rights & conditions of employment, data protection processes) | - |
+| - | - | - | - | - | False | Modern Slavery Policy/Statement | - |
+| - | - | - | - | - | False | Whistleblowing/Grievance | - |
+| - | - | - | - | - | False | Supplier Code of Conduct | - |
+| - | - | - | - | - | False | Environmental (commitment to reduce waste, energy & water usage, minimise biodiversity impact etc.) | - |
+| - | - | - | 3 | We believe that knowing your suppliers, third party partners and service providers and being confident that they are behaving well is an important part of doing good business. | False | We set social or environmental standards on our supply chain | - |
+| - | - | - | - | - | False | We sometimes follow-up and carry out audits on our suppliers | - |
+| - | - | - | - | - | False | We perform due diligence on key suppliers to understand their environmental and social practices | - |
+| - | - | - | - | - | False | We review key supplier performance regularly including processes, controls and performance metrics | - |
+| - | - | - | 4 | We believe companies have a responsibility to respect and take action to protect human rights (HR) across its supply chain as well as in thier own operations. How robust is your company's HR due diligence process? | False | We have made a public commitment to respect HR (please provide link) | - |
+| - | - | - | - | - | False | Our commitment to HR due diligence is adopted and embedded into policies/procedures | - |
+| - | - | - | - | - | False | Our due diligence process identifies material adverse HR impacts to our business and supply chain | - |
+| - | - | - | - | - | False | We take action to put things right (e.g. we cease, prevent, mitigate and remediate material impacts) | - |
+| - | - | - | - | - | False | We provide a remedy when things go wrong (e.g. we establish or participate in grievance mechanisms) | - |
+| - | - | - | 5 | We believe that people deserve to be paid fairly and transparently for work they perform. | False | Our employees all have formal employment contracts, including temporary and seasonal workers. | - |
+| - | - | - | - | - | False | Our employees, including interns, are paid the relevant Living Wage | - |
+| - | - | - | - | - | False | We carry out inflation linked pay adjustments | - |
+| - | - | - | - | - | False | We review employee remuneration (and benchmark against broader market) every year | - |
+| - | - | - | - | - | False | None of our employees have gone on strike in the last 3 years | - |
+| - | - | - | 6 | We encourage companies to be straightforward and explicit about all employee processes. What is included in your employee contracts, handbook, or policies? | False | Information on expected working hours and conditions | - |
+| - | - | - | - | - | False | Information around benefits, training and leave | - |
+| - | - | - | - | - | False | Guidance to support people reporting any wrongdoing (e.g. whistleblowing procedures) | - |
+| - | - | - | - | - | False | Guidance on unacceptable behaviours and possible consequences | - |
+| - | - | - | - | - | False | Disciplinary procedures and possible sanctions | - |
+| - | - | - | 7 | We believe that responsible employers are those that create a diverse, equitable and inclusive workplace for their employees.\n\nPlease share evidence/data where applicable to back up your responses. | False | Our employees receive training on diversity, equality and inclusion (please provide evidence) | - |
+| - | - | - | - | - | False | Candidates are interviewed by both men and women | - |
+| - | - | - | - | - | False | We track the diversity of our workforce | - |
+| - | - | - | - | - | False | We implement equal compensation across demographic factors | - |
+| - | - | - | - | - | False | We set targets for representation | - |
+| - | - | - | - | - | False | Other (please comment) | - |
+| - | - | - | 8 | Diversity at the board level is historically very low. Companies around the world are now having to disclose whether they have met specific board diversity targets on a "comply or explain" basis. Do you meet these targets? | False | At least 40 per cent of the board self-identify as women | - |
+| - | - | - | - | - | False | At least 1 of the senior board (chair, CEO, senior independent director, or CFO) is held by a woman | - |
+| - | - | - | - | - | False | At least 1 member of the board is from a minority ethnic background | - |
+| - | - | - | - | - | False | None of the above | - |
+| - | - | - | 8 | We believe happy employees drive performance for the company they work for. What kind of employee benefits do you provide? | - | Our company provides shares or other incentive plans for its employees | - |
+| - | - | - | - | - | - | Our company provides access to free wellbeing services (e.g. gym discounts, meditation apps) | - |
+| - | - | - | - | - | False | Our company provides private medical cover as part of employment | - |
+| - | - | - | - | - | - | Our company provides death in service as part of employment | - |
+| - | - | - | - | - | False | Our company provides all employees with a pension | - |
+| - | - | - | 9 | We believe that family is incredibly important and that businesses have a responsibility to help their employees balance their home and work life. | - | We offer enhanced maternity leave (i.e. beyond statutory requirements) | - |
+| - | - | - | - | - | - | We offer enhanced paternity leave | - |
+| - | - | - | - | - | - | We offer enhanced adoption leave | - |
+| - | - | - | - | - | - | We offer shared parental leave | - |
+| - | - | - | - | - | - | We offer enhanced sick leave | - |
+| - | - | - | - | - | - | We offer flexible working so employees can work at times that suit their needs | - |
+| - | - | - | - | - | - | We offer hybrid working so employees have the flexibility they may need over their work locations | - |
+| - | - | - | 10 | We believe that companies should form part of the communities within which they operate and promote the use of local labour where possible. How does your company connect and engage with your local community? | False | Our company contributes to community development programs through financial donations (or other) | - |
+| - | - | - | - | - | - | We have processes or policies to encourage local employment as a first point of call | - |
+| - | - | - | - | - | False | We plan to use local labour for the project/s in question (please detail) | - |
+| - | - | - | - | - | - | We have already used local labour for the project/s in question (please detail) | - |
+| - | - | - | - | - | - | We engage with the communities around our projects and actively seek to reduce negative impacts | - |
+| - | - | - | 11 | We believe companies should respect the environment and look for ways to reduce environmental impact of their activities where possible. \n\nPlease provide evidence/data where applicable to back up your response. | - | We measure the carbon footprint of our company | - |
+| - | - | - | - | - | - | We have set targets to reduce the carbon footprint of our company | - |
+| - | - | - | - | - | - | We can measure and report on the carbon emissions associated with the project/s in question | - |
+| - | - | - | - | - | False | We implement additional environmental initiatives/enhancements on the project/s (please detail) | - |
+| - | - | - | - | - | - | We have processes to comply with all planning, development conditions associated with the project/s in question? | - |
+| - | - | - | 12 | We believe that responsible companies take care to minimise use of natural resources by using green energy where possible and recycling/reusing materials as much as possible. What type of strategies does your company have? | - | Strategies for the responsible disposal of materials used in our company operations or asset lifecycle | - |
+| - | - | - | - | - | False | Strategies that aim to increase asset life of our project/s. | - |
+| - | - | - | - | - | - | Strategies to increase the recyclability of operational assets and components | - |
+| - | - | - | - | - | - | Strategies to reduce the amount of raw materials used in our operations, services or product | - |
+| - | - | - | - | - | - | Our company headquarters are powered by renewable energy sources | - |
+| - | - | - | - | - | - | Educational strategies to employees on responsible disposal of office waste | - |
+| - | - | - | 13 | The climate emergency will have devastating consequences. We believe that companies need to understand the impact of climate change on their business and their projects. Which of the following apply?\n\nPlease specify in the answer column if this is at a project or company level. | False | We have assessed physical climate risks across our operations and value chain | - |
+| - | - | - | - | - | True | We have assessed transition climate risks across our operations and value chain | - |
+| - | - | - | - | - | True | We consider the materiality of these issues within different climate pathways (please specify) | - |
+| - | - | - | - | - | False | We have processes to manage and mitigate climate related risks | - |
+| - | - | - | - | - | - | We have considered climate risks and have not identified any serious issues for the company | - |
+| - | - | - | - | - | - | We have not yet considered the impact of climate change on our business | - |
+| - | - | - | 14 | Transparency is the cornerstone to good ESG practices. Can you or do you already report on ESG considerations? | - | We produce a company-wide ESG/sustainability report (please detail/provide link) | - |
+| - | - | - | - | - | False | We have the ability to provide project specific ESG KPIs for fund reporting | - |
+
+## Planet - People - Performance
+| Unnamed: 0 | Unnamed: 1 | Unnamed: 2 | Unnamed: 3 | Unnamed: 4 | Unnamed: 5 | Unnamed: 6 | Unnamed: 7 | Unnamed: 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | ESG & Impact Reporting | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Company Name | GCG LTD | - | - | - | - |
+| - | - | - | Company Contact | Name: | - | Email: | - | - |
+| - | - | - | Reporting Period: | Start Date: | - | End Date: | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Floating Offshore Wind Developer Business | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Theme | Metric | Question | Supporting links/Comments | Answer | Comment / Estimate calculation |
+| - | - | - | Planet | Biodiversity | Any particular additions/ design choices that will enhance biodiversity or environmental initiatives which will mitigate any environmental impact? | - | - | - |
+| - | - | - | People | Job creation | Number of FTEs across whole GCG LTD | - | - | - |
+| - | - | - | - | Job creation | % of local employees | - | - | - |
+| - | - | - | - | Community relations | Community benefit funds: Total community benefit funds budgeted and distributed with associated records of projects supported, including services provided and estimated number of beneficiaries. | - | - | - |
+| - | - | - | - | Community relations | Any other community engagement undertaken | - | - | - |
+| - | - | - | Performance | Performance Initiatives | Details of any performance initiatives that may benefit long-term business sustainability and operational efficiency. | - | - | - |
+
+## Company PPP reporting
+| Unnamed: 0 | Unnamed: 1 | Unnamed: 2 | Unnamed: 3 | Unnamed: 4 | Unnamed: 5 | Unnamed: 6 | Unnamed: 7 | Unnamed: 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | ESG & Impact Reporting | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Company Name | GCG LTD | - | - | - | - |
+| - | - | - | Company Contact | Name: | James Driscoll | Email: | - | - |
+| - | - | - | Reporting Period: | Start Date: | 1st January 2022 | End Date: | 31st December 2022 | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Floating Offshore Wind Developer Business | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Theme | Metric | Question | Supporting links/Comments | Answer | Comment / Estimate calculation |
+| - | - | - | Planet | Biodiversity | Any particular additions/ design choices that will enhance biodiversity or environmental initiatives which will mitigate any environmental impact? | e.g eco- scour protection, kelp forest etc. | - | GCG LTD GCG LTD is an American blue economy project developer working globally with the ocean’s resources to deliver solutions to the climate crisis. For the current project portfolio, all projects are pre-consent award. In taking projects forward to secure the necessary consents, particular additions/ design choices will reflect the specific ‘Activities' and locational conditions of the project and environmental/ biodiversity mitigation and/or enhancement identified accordingly. |
+| - | - | - | People | Job creation | Number of FTEs across whole GCG LTD | - | 85 | If not real data, please provide your estimate calculation here. |
+| - | - | - | - | Job creation | % of local employees | Local = commute <30km | 0.75 | - |
+| - | - | - | - | Community relations | Community benefit funds: Total community benefit funds budgeted and distributed with associated records of projects supported through community funding (for example, local taxes), including service provided (improvement of local infrastructure, education programmes, supporting local initiatives, local job creation) and estimated number of beneficiaries. | - | See comment | GCG LTD are involved in lots of community engagement and education either alone of jointly with partners \n•\tGCG LTD Oceans Education resources include The Seagull & The Storm Quiz and Think-Like-a-Scientist. \n•\tRoisin and The Wave has been produced by GCG LTD as an educational video inspiring the younger generation on climate change and renewable energy\n•\tGCG LTD are sponsoring the NMCI’s Seafarer’s Conference 2023 with a theme of Themed ‘Thriving Fishing, Thriving Offshore Wind, Thriving Ports’\n•\tGCG LTD recently sponsored the “Floating Offshore Wind Challenge for Youth”, an engineering competition targeting secondary school students. \nhttps://simplybluegroup.com/wp-content/uploads/2021/11/Working-With-The-Oceans-Education-Pack.pdf\nhttps://simplybluegroup.com/wp-content/uploads/2022/03/Think-Like-a-Scientist.pdf\nhttps://simplybluegroup.com/news/floating-offshore-wind-challenge-for-youth-launched/ |
+| - | - | - | - | Community relations | Any other community engagement undertaken | - | See comment | •\tBGW/ Erebus is a GCG LTD-Total Energies joint venture project\no\tIt is committed to developing a local Community Benefit Fund, detail to evolve as project progresses. \no\tSupply Chain Plan submitted to UK Govt at end of last year and includes detail about education activity such as collaboration with partners like Pembrokeshire Council, Pembrokeshire College and other stakeholders in a Future Energy Skills Working Group\no\tIn the longer-term Blue Gem Wind is encouraging young pupils and students to consider future careers in renewables. \no\thas developed and delivered an award-winning STEM education programme delivering floating wind STEM activities within the new Curriculum for Wales to over 3,000 pupils to date; \no\tis supporting Pembrokeshire College with a new Pearson BTEC Engineering course for 14-16 year olds from a chosen cluster of schools from Pembrokeshire.\nhttps://www.bluegemwind.com/news/pembrokeshire-school-names-first-platform-for-erebus-floating-wind-farm/\n |
+| - | - | - | Performance | Performance Initiatives | Details of any performance initiatives from which the project may benefit (e.g. new technologies, storage, initiatives which may extend the useful economic life of the project or increase yield). | - | See comment | GCG LTD GCG LTD is an American blue economy project developer working globally with the ocean’s resources to deliver solutions to the climate crisis. For the current project portfolio, all projects are pre-consent award. In taking projects forward performance initiatives will be developed specific to the bespoke requirements of the projects. |
+
+## EU Taxonomy Alignment
+| Unnamed: 0 | Unnamed: 1 | Unnamed: 2 | Unnamed: 3 | Unnamed: 4 | Unnamed: 5 | Unnamed: 6 | Unnamed: 7 | Unnamed: 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | EU Taxonomy Criteria Assessment | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Company Name | GCG LTD | - | - | - | - |
+| - | - | - | Company Contact | Name: James Driscoll | James Driscoll | Email: | - | - |
+| - | - | - | Reporting Period: | Start Date: | 1st January 2022 | End Date: | 31st Dec 2022 | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | INSTRUCTIONS FOR COMPLETION: \nPlease answer all questions relevant to the investee company. There are options for "N/A" and "More work required" if you are unable to answer. Please provide additional commentary to support your answers where possible. | - | - | - | - | - |
+| - | - | - | NOTE: We are still trying to confirm the business units for Wave Energy Business, E-fuels. We think the port and aquaculture business is not eligible. | - | - | - | - | - |
+| - | - | - | Floating Offshore Wind Developer Business | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | EU TAXONOMY CRITERIA: | https://ec.europa.eu/sustainable-finance-taxonomy/activities/activity/82/view | - | - | - | - |
+| - | - | - | Climate Change Mitigation | Question | Supporting links/Comments | Required to pass | Answer | Comment |
+| - | - | - | - | Does the activity consists in one of the following individual measures, if installed on-site as technical building systems:\n\ninstallation, maintenance and repair of wind turbines and the ancillary technical equipment; \n\nNACE code M71: This division includes the provision of architectural services, engineering services, drafting services, building inspection services and surveying and mapping services.\n It also includes the performance of physical, chemical, and other analytical testing services.\n | - | Y | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | DNSH Criteria | Question | Supporting links/Comments | Required to pass | Answer | Comment |
+| - | - | - | Climate Adaptation | Does the company to a best-effort basis and where applicable comply with the climate resilience assessment criteria set out in the supporting link? Please also see the ppt presentation and provide latest reports. | Please provide: \n(i) the company’s latest climate risk and vulnerability assessment. \n(ii) an update on progress against the Company’s Climate Adaptation Plan. \n\nCompany’s Climate Adaptation Plan should detail solutions for existing and new activities responding to each material physical climate risk. \nThis should include: \n• management plans that evidence the adaptation solutions identified \n• a plan for implementation, \n•a plan for monitoring their effectiveness, ideally, reporting of performance resulting from activities implemented.\n\n https://ec.europa.eu/sustainable-finance-taxonomy/assets/documents/CCM%20Appendix%20A.pdf | Y or N/A | - | - |
+| - | - | - | Water | - | - | - | - | - |
+| - | - | - | Circular Economy | - | - | - | - | - |
+| - | - | - | Pollution Prevention | - | - | - | - | - |
+| - | - | - | Biodiversity | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | Wave Energy Business | Awaiting confirmation on EU Taxonomy criteria | - | - | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | EU TAXONOMY CRITERIA: | https://ec.europa.eu/sustainable-finance-taxonomy/activities/activity/26/view | - | - | - | - |
+| - | - | - | Climate Change Mitigation | Question | Supporting links/Comments | Required to pass | Answer | Comment |
+| - | - | - | - | Does the activity consists in one of the following individual measures, if installed on-site as technical building systems:\n\n-Produce Electricity from ocean energy\n- Construction or operation of electricity generation facilities that produce electricity from ocean energy.\n\nNACE code M71: This division includes the provision of architectural services, engineering services, drafting services, building inspection services and surveying and mapping services.\n It also includes the performance of physical, chemical, and other analytical testing services.\n\n | - | Y | - | - |
+| - | - | - | - | - | - | - | - | - |
+| - | - | - | DNSH Criteria | Question | Supporting links/Comments | Required to pass | Answer | Comment |
+| - | - | - | Climate Adaptation | Does the activity to a best-effort basis and where applicable comply with the climate resilience assessment criteria set out in the supporting link? Please also see the ppt presentation and provide latest reports. | https://ec.europa.eu/sustainable-finance-taxonomy/documents/CCM%20Appendix%20A.pdf | Y or N/A | - | - |
+| - | - | - | Water | Please confirm that the projects take appropriate measures to prevent or mitigate impacts in relation to "Noise/Energy". | Introduction of energy, including underwater noise, is at levels that do not adversely affect the marine environment. See Descriptor 11, here: https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32017D0848&from=EN | Y,N/A | - | - |
+| - | - | - | Circular Economy | - | - | - | - | - |
+| - | - | - | Pollution Prevention | Measures are in place to minimise toxicity of anti-fouling paint and biocides | As laid down in Regulation (EU) No 528/2012 of the European Parliament and of the Council of 22 May 2012 concerning the making available on the market and use of biocidal products (OJ L 167, 27.6.2012, p. 1)., which implements in Union law the International Convention on the Control of Harmful Anti-fouling Systems on Ships adopted on 5 October 2001. | - | - | - |
+| - | - | - | Biodiversity | Has an EIA been completed for the site in line with EU Standards and requirements? | E.g. In line with the EU Directives on Environmental Impact Assessment (2014/52/EU) , Strategic Environmental Assessment (2001/42/EC) or the IFC Performance Standard 1\n\n. https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=LEGISSUM:ev0032&from=EN&isLegissum=true | Y, N/A (please provide a copy once available) | - | - |
+| - | - | - | Biodiversity | Have the required mitigation measures for protecting biodiversity/eco-systems been implemented? | - | Y, N/A | - | - |
+| - | - | - | Biodiversity | Is the site located in or near to biodiversity-sensitive areas? If yes, is there a robust, appropriately designed and long-term biodiversity monitoring and evaluation programme implemented? | Biodiversity Sensitive areas include: (i) Natura 2000 (see :https://natura2000.eea.europa.eu/) \n (ii) Key Biodiversity areas (see: https://www.keybiodiversityareas.org/sites/search) | Y, N/A | - | - |
+| - | - | - | Biodiversity | please confirm that the plans in place: \n(i) promote maintenance of biological diversity and help to ensure that the quality and occurrence of habitats and the distribution and abundance of species are in line with prevailing physiographic, geographic and climatic conditions. | This will require the plans to have considered EU methodological standards: Commission Decision (EU) 2017/848: \nhttps://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX:32017D0848&from=EN\n\n | Y, N/A | - | - |
+
+## SFDR Reporting (Companies)
+| Unnamed: 0 | Unnamed: 1 | Unnamed: 2 | Unnamed: 3 | Unnamed: 4 | Unnamed: 5 | Unnamed: 6 | Unnamed: 7 | Unnamed: 8 | Unnamed: 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | GLOBAL Parent - INVESTING | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | SFDR Regulatory Requirements | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | The below questions form part of the fund's disclosure requirements under the Sustainable Finance Disclosure Regulation's "Principle Adverse Impacts" disclosure. These require investee companies to provide information against a number of indicators detailed below. The indicators can also be viewed here: https://ec.europa.eu/finance/docs/level-2-measures/C\_2022\_1931\_1\_EN\_annexe\_acte\_autonome\_part1\_v6.pdf \n\n\nINSTRUCTIONS FOR COMPLETION:\n\nPlease answer all of the questions below providing answers in the format requested. Please do provide additional comments in the comment column to support your answers where necessary. | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | Company Contact | - | Company Response | - | - | - | - |
+| - | - | - | Investee Company Name: | Company Name | - | - | - | - | - |
+| - | - | - | Fund: | Website Address | - | - | - | - | - |
+| - | - | - | Reporting Period: | - | Start Date: | - | End Date: | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | - | - | - | - | - | - | - |
+| - | - | - | SFDR Criteria | - | Question | Supporting links/Comments | Required to pass | Answer | Comment |
+| - | - | - | 1 | Biodiversity | If the investee company is located in or near to biodiversity-sensitive area, does the activities of those investee companies negatively affect those areas? | - | No or N/A | - | - |
+| - | - | - | 2 | Water | Tonnes of chemical emissions released into water by investee company | - | Number | - | - |
+| - | - | - | 3 | Waste | Tonnes of hazardous and radioactive waste | - | Number | - | - |
+| - | - | - | 4 | Social and employee matters | Has the investee company been involved in violations of the UNGC principles or OECD Guidelines for Multinational Enterprises? | - | No or N/A | - | - |
+| - | - | - | 5 | Social and employee matters | Does the investee company have policies to monitor compliance with the UNGC principles or OECD Guidelines for Multinational Enterprises or grievance /complaints handling mechanisms to address violations of the UNGC principles or OECD Guidelines for Multinational Enterprises? | - | Yes | - | - |
+| - | - | - | 6 | Social and employee matters | Unadjusted gender pay gap of investee company | - | Number | - | - |
+| - | - | - | 7 | Social and employee matters | Ratio of female to male board members in investee companies | - | Number of Females: Number of Males . Please specify if other genders on the board. | - | - |
+| - | - | - | 8 | Social and employee matters | Is the investee company involved in the manufacture or selling of controversial weapons? | - | No | - | - |
+| - | - | - | 9 | Additional Metric: Social and employee matters | Does the investee company have a grievance/complaints\nhandling mechanism\nrelated to employee\nmatters? | - | Yes | - | - |
+| - | - | - | 10 | Additional Metric: Biodiversity | Does the investee company have sustainable land practices or policies? | - | Yes or N/A | - | - |
+
+OUTPUT FORMAT:
+<questions>
+  <q type="open_ended">Full question text</q>
+  <q type="single_choice">Question? (Option A|Option B)</q>
+</questions>
+
+IMPORTANT: Extract exactly 65 questions if possible. Return ONLY the XML.

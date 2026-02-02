@@ -35,12 +35,6 @@ class Settings(BaseSettings):
         "arn:aws:bedrock:us-west-2::inference-profile/"
         "us.anthropic.claude-opus-4-5-20251101-v1:0"
     )
-    
-    # Smaller/faster model for LLM-as-judge (Approach 3)
-    bedrock_judge_model_id: str = (
-        "arn:aws:bedrock:us-west-2::inference-profile/"
-        "global.anthropic.claude-3-haiku-20240307-v1:0"
-    )
 
     # File paths
     base_dir: Path = Path(__file__).parent.parent.parent
@@ -52,9 +46,9 @@ class Settings(BaseSettings):
     upload_dir: Path = base_dir / "uploads"
 
     # LLM settings
-    max_tokens: int = 24576  # Opus 4.5 supports up to 32K, using 24K for safety
+    max_tokens: int = 32768  # Opus 4.5 maximum output tokens (32K)
     temperature: float = 0.1
-    judge_max_tokens: int = 1024
+    judge_max_tokens: int = 16384  # Sonnet 4.5 maximum output tokens (16K)
     judge_temperature: float = 0.0
 
     # Confidence threshold for Approach 3

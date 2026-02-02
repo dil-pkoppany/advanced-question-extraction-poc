@@ -12,22 +12,33 @@ const APPROACHES = [
     id: 1 as const,
     title: 'Approach 1: Fully Automatic',
     description:
-      'Let the LLM automatically detect and extract all questions. No configuration needed. Best for quick analysis.',
+      'Let the LLM automatically detect and extract all questions. No configuration needed.',
     icon: '🤖',
+    needsConfig: false,
   },
   {
     id: 2 as const,
     title: 'Approach 2: User-Guided + LLM',
     description:
-      'You specify which columns contain questions and answers. The LLM extracts with your context for better accuracy.',
+      'You specify which columns contain questions and answers. The LLM extracts with your context.',
     icon: '🎯',
+    needsConfig: true,
   },
   {
     id: 3 as const,
     title: 'Approach 3: Deterministic + Judge',
     description:
-      'Parse questions directly from columns (no LLM). A fast LLM then scores confidence for each item. Best for validation.',
+      'Parse questions directly from columns. A fast LLM scores confidence for each item.',
     icon: '⚖️',
+    needsConfig: true,
+  },
+  {
+    id: 4 as const,
+    title: 'Approach 4: Multi-Step Pipeline',
+    description:
+      'Auto-discovers structure, extracts with dependencies, separates help text, validates.',
+    icon: '🔬',
+    needsConfig: false,
   },
 ];
 
@@ -37,12 +48,38 @@ export function ApproachStep({
   onNext,
   onBack,
 }: ApproachStepProps) {
-  const handleApproachChange = (approach: 1 | 2 | 3) => {
-    onConfigChange({ ...config, approach });
+  const toggleApproach = (approachId: 1 | 2 | 3 | 4) => {
+    const current = config.approaches || [];
+    let newApproaches: (1 | 2 | 3 | 4)[];
+    
+    if (current.includes(approachId)) {
+      // Remove if already selected (but keep at least one)
+      newApproaches = current.filter(a => a !== approachId);
+      if (newApproaches.length === 0) {
+        return; // Don't allow deselecting all
+      }
+    } else {
+      // Add to selection
+      newApproaches = [...current, approachId].sort((a, b) => a - b);
+    }
+    
+    // Update config with new approaches list
+    // Set primary approach to first selected for backward compatibility
+    onConfigChange({
+      ...config,
+      approaches: newApproaches,
+      approach: newApproaches[0],
+      run_all_approaches: newApproaches.length === 4,
+    });
   };
 
-  const handleRunAllChange = (runAll: boolean) => {
-    onConfigChange({ ...config, run_all_approaches: runAll });
+  const selectAllApproaches = () => {
+    onConfigChange({
+      ...config,
+      approaches: [1, 2, 3, 4],
+      approach: 1,
+      run_all_approaches: true,
+    });
   };
 
   const handleModelChange = (model: 'opus-4.5' | 'sonnet-4.5') => {
@@ -53,34 +90,69 @@ export function ApproachStep({
     onConfigChange({ ...config, compare_models: compareModels });
   };
 
+  const selectedApproaches = config.approaches || [config.approach];
+  const needsConfig = selectedApproaches.some(a => a === 2 || a === 3);
+
   return (
     <div className="card">
       <div className="card-header">
         <span style={{ fontSize: '1.5rem' }}>🔧</span>
-        <h2>Select Extraction Approach</h2>
+        <h2>Select Extraction Approaches</h2>
       </div>
 
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+        Select one or more approaches to run. Multiple selections will be compared side-by-side.
+      </p>
+
       <div className="radio-group">
-        {APPROACHES.map((approach) => (
-          <label
-            key={approach.id}
-            className={`radio-option ${config.approach === approach.id ? 'selected' : ''}`}
-          >
-            <input
-              type="radio"
-              name="approach"
-              checked={config.approach === approach.id}
-              onChange={() => handleApproachChange(approach.id)}
-            />
-            <div className="radio-option-content">
-              <h4>
-                <span style={{ marginRight: '0.5rem' }}>{approach.icon}</span>
-                {approach.title}
-              </h4>
-              <p>{approach.description}</p>
-            </div>
-          </label>
-        ))}
+        {APPROACHES.map((approach) => {
+          const isSelected = selectedApproaches.includes(approach.id);
+          return (
+            <label
+              key={approach.id}
+              className={`radio-option ${isSelected ? 'selected' : ''}`}
+            >
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => toggleApproach(approach.id)}
+              />
+              <div className="radio-option-content">
+                <h4>
+                  <span style={{ marginRight: '0.5rem' }}>{approach.icon}</span>
+                  {approach.title}
+                  {approach.needsConfig && (
+                    <span style={{ 
+                      fontSize: '0.7rem', 
+                      background: 'var(--primary)', 
+                      color: 'white',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      marginLeft: '0.5rem',
+                      fontWeight: 'normal'
+                    }}>
+                      needs config
+                    </span>
+                  )}
+                </h4>
+                <p>{approach.description}</p>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: '0.5rem' }}>
+        <button 
+          className="btn btn-secondary" 
+          onClick={selectAllApproaches}
+          style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
+        >
+          Select All Approaches
+        </button>
+        <span style={{ marginLeft: '1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          {selectedApproaches.length} approach{selectedApproaches.length !== 1 ? 'es' : ''} selected
+        </span>
       </div>
 
       <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
@@ -127,30 +199,7 @@ export function ApproachStep({
               Compare Both Models
             </h4>
             <p>
-              Run extraction with both Opus 4.5 and Sonnet 4 to compare quality, speed, and token usage.
-            </p>
-          </div>
-        </label>
-      </div>
-
-      <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
-        <label
-          className={`radio-option ${config.run_all_approaches ? 'selected' : ''}`}
-          style={{ background: config.run_all_approaches ? 'rgba(102, 126, 234, 0.1)' : undefined }}
-        >
-          <input
-            type="checkbox"
-            checked={config.run_all_approaches}
-            onChange={(e) => handleRunAllChange(e.target.checked)}
-          />
-          <div className="radio-option-content">
-            <h4>
-              <span style={{ marginRight: '0.5rem' }}>📊</span>
-              Run All Approaches for Comparison
-            </h4>
-            <p>
-              Run all three approaches and compare results side-by-side. Useful for
-              benchmarking and finding the best approach for your data.
+              Run extraction with both Opus 4.5 and Sonnet 4.5 to compare quality, speed, and token usage.
             </p>
           </div>
         </label>
@@ -169,9 +218,7 @@ export function ApproachStep({
           Back
         </button>
         <button className="btn btn-primary" onClick={onNext}>
-          {config.approach === 1 && !config.run_all_approaches
-            ? 'Run Extraction'
-            : 'Configure Columns'}
+          {needsConfig ? 'Configure Columns' : 'Run Extraction'}
         </button>
       </div>
     </div>

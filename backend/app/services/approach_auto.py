@@ -220,8 +220,9 @@ Extract ALL questions. Return ONLY the XML."""
                 }
                 question_type = type_mapping.get(type_str, QuestionType.OPEN_ENDED)
 
-                # Extract embedded answers from question text
+                # Extract embedded answers from question text and clean the text
                 answers = None
+                clean_question_text = question_text
                 if "(" in question_text and "|" in question_text:
                     # Find answers in parentheses
                     start = question_text.rfind("(")
@@ -229,10 +230,12 @@ Extract ALL questions. Return ONLY the XML."""
                     if start < end:
                         answers_str = question_text[start + 1 : end]
                         answers = [a.strip() for a in answers_str.split("|")]
+                        # Remove the answers portion from question text
+                        clean_question_text = question_text[:start].strip()
 
                 questions.append(
                     ExtractedQuestion(
-                        question_text=question_text,
+                        question_text=clean_question_text,
                         question_type=question_type,
                         answers=answers,
                     )

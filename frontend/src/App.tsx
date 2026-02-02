@@ -16,6 +16,7 @@ const STEPS: { key: WizardStep; label: string }[] = [
 
 const initialConfig: ExtractionConfig = {
   approach: 1,
+  approaches: [1],  // Selected approaches to run
   run_all_approaches: false,
   column_mappings: [],
   question_types: [],
@@ -70,11 +71,12 @@ export default function App() {
               setState((prev) => ({ ...prev, config }));
             }}
             onNext={() => {
-              // Skip config step for approach 1
-              if (state.config.approach === 1 && !state.config.run_all_approaches) {
-                goToStep('running');
-              } else {
+              // Check if any selected approach needs column mappings (approaches 2 or 3)
+              const needsConfig = state.config.approaches.some(a => a === 2 || a === 3);
+              if (needsConfig) {
                 goToStep('config');
+              } else {
+                goToStep('running');
               }
             }}
             onBack={() => goToStep('upload')}

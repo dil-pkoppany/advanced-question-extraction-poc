@@ -4,7 +4,7 @@ A POC for comparing different LLM-based approaches to extract questions from Exc
 
 ## Goal
 
-Evaluate and compare three distinct methods for extracting structured question data from Excel files, measuring accuracy, speed, and quality to determine the optimal approach for production use.
+Evaluate and compare four distinct methods for extracting structured question data from Excel files, measuring accuracy, speed, and quality to determine the optimal approach for production use.
 
 ## System Architecture
 
@@ -22,6 +22,7 @@ flowchart LR
         A1[Approach 1]
         A2[Approach 2]
         A3[Approach 3]
+        A4[Approach 4]
         Compare[Comparison Engine]
         GTStore[Ground Truth Store]
     end
@@ -33,10 +34,10 @@ flowchart LR
     end
 
     Upload --> Parser
-    Config --> A1 & A2 & A3
-    A1 & A2 --> Opus & Sonnet
+    Config --> A1 & A2 & A3 & A4
+    A1 & A2 & A4 --> Opus & Sonnet
     A3 --> Haiku
-    A1 & A2 & A3 --> Compare
+    A1 & A2 & A3 & A4 --> Compare
     Compare --> Results
     GT --> GTStore
     GTStore --> Compare
@@ -64,6 +65,7 @@ Create validated question sets ("golden data") to measure extraction accuracy:
 | **1. Fully Automatic** | Converts Excel to Markdown, sends entire content to LLM | Quick extraction, no configuration needed |
 | **2. User-Guided** | User maps columns, LLM extracts with context hints | Better accuracy when structure is known |
 | **3. Deterministic + Judge** | Parses questions without LLM, uses Haiku to validate | Fastest, with quality scoring |
+| **4. Multi-Step Pipeline** | Auto-detects structure, extracts with context, detects follow-up questions | Complex questionnaires with dependencies |
 
 ## Quick Start
 
@@ -96,7 +98,8 @@ Results are saved to `output/runs/{run_id}/` with:
 |----------|-------------|
 | [PROJECT.md](PROJECT.md) | Technical details, dependencies, file structure |
 | [Wizard Flow](frontend/src/components/Wizard/EXTRACTION_FLOW.md) | Frontend extraction wizard |
-| [Approaches](backend/app/services/APPROACHES.md) | Backend extraction approaches |
+| [Approaches](backend/app/services/APPROACHES.md) | Backend extraction approaches overview |
+| [Approach 4](backend/app/services/APPROACH_4.md) | Multi-step pipeline with follow-up detection |
 | [Output Schema](backend/app/schemas/OUTPUT_SCHEMA.md) | JSON output structure |
 | [History Feature](frontend/src/components/History/HISTORY.md) | Historical runs viewer |
 | [Ground Truth](frontend/src/components/GroundTruth/GROUND_TRUTH.md) | Ground truth management |

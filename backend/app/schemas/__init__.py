@@ -2,6 +2,7 @@
 
 from .models import (
     QuestionType,
+    QuestionDependency,
     ModelType,
     ColumnMapping,
     SheetMetadata,
@@ -26,6 +27,7 @@ from .models import (
 
 __all__ = [
     "QuestionType",
+    "QuestionDependency",
     "ModelType",
     "ColumnMapping",
     "SheetMetadata",

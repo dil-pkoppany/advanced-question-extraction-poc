@@ -18,6 +18,7 @@ from ..schemas import (
 from ..services.approach_auto import AutoExtractionService
 from ..services.approach_guided import GuidedExtractionService
 from ..services.approach_judge import JudgeExtractionService
+from ..services.approach_pipeline import PipelineExtractionService
 from ..evaluation.metrics import MetricsCalculator
 from .upload import _get_original_filename
 
@@ -33,6 +34,7 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
     1. Auto LLM: Fully automatic extraction using LLM
     2. User-Guided: User provides column mappings, LLM extracts with context
     3. Deterministic + Judge: Parse deterministically, LLM scores confidence
+    4. Pipeline: Multi-step pipeline with structure analysis, extraction, and validation
     """
     settings = get_settings()
 
@@ -49,10 +51,12 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
     # Generate run ID
     run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
-    # Determine which approaches to run
+    # Determine which approaches to run (support new approaches list or fallback to legacy)
     approaches_to_run = []
-    if request.config.run_all_approaches:
-        approaches_to_run = [1, 2, 3]
+    if request.config.approaches:
+        approaches_to_run = list(request.config.approaches)
+    elif request.config.run_all_approaches:
+        approaches_to_run = [1, 2, 3, 4]
     else:
         approaches_to_run = [request.config.approach]
 
@@ -64,11 +68,13 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
         models_to_run = [request.config.model]
 
     # Validate config for approaches 2 and 3
-    if request.config.approach in [2, 3] and not request.config.column_mappings:
+    if any(a in [2, 3] for a in approaches_to_run) and not request.config.column_mappings:
         raise HTTPException(
             status_code=400,
             detail="Column mappings required for approaches 2 and 3",
         )
+    
+    # Approaches 1 and 4 don't need column mappings (they auto-discover structure)
 
     results: dict[str, ExtractionResult] = {}
 
@@ -100,6 +106,11 @@ async def run_extraction(request: ExtractionRequest) -> ExtractionResponse:
                         file_path,
                         column_mappings=request.config.column_mappings,
                     )
+                elif approach == 4:
+                    # Approach 4 uses its own model selection (Opus for extraction, Haiku for judging)
+                    # The model_id parameter is used for the extraction steps
+                    service = PipelineExtractionService(model_id=model_id)
+                    result = await service.extract(file_path, run_id=run_id)
                 else:
                     continue
 

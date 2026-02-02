@@ -1,6 +1,6 @@
 # Extraction Approaches
 
-This document details the three extraction approaches implemented in the backend.
+This document details the four extraction approaches implemented in the backend.
 
 ## Overview
 
@@ -15,6 +15,7 @@ flowchart TB
         A1[Approach 1: Auto]
         A2[Approach 2: Guided]
         A3[Approach 3: Judge]
+        A4[Approach 4: Pipeline]
     end
 
     subgraph llm [LLM Layer]
@@ -25,12 +26,14 @@ flowchart TB
     Excel --> A1
     Excel --> A2
     Excel --> A3
+    Excel --> A4
     Mappings --> A2
     Mappings --> A3
 
     A1 --> Opus
     A2 --> Opus
     A3 --> Haiku
+    A4 --> Opus
 
     Opus --> XML[XML Response]
     Haiku --> JSON[JSON Scores]
@@ -250,6 +253,65 @@ Evaluate ALL {count} items. Return ONLY the JSON.
 
 ---
 
+## Approach 4: Multi-Step Pipeline (`approach_pipeline.py`)
+
+**Automatic structure detection + LLM extraction with context.**
+
+### Process
+
+1. **Structure Analysis**: LLM analyzes Excel to identify question/answer columns
+2. **Coverage Validation**: Verify structure spans the file, identify question rows
+3. **Question Extraction**: Extract questions with rich context (answer options, dependencies)
+4. **Normalization**: Convert XML to `ExtractedQuestion` objects
+
+### When to Use
+
+- Unknown file structure (like Approach 1) but need better accuracy
+- Need dependency detection between questions
+- Want automatic type detection with context-aware extraction
+
+### Key Features
+
+- **Auto-detects columns**: No user mapping required
+- **Gap tolerance**: Handles empty rows between answer options (up to 5 rows)
+- **Follow-up detection**: Automatically identifies follow-up questions and creates dependencies
+- **Help text separation**: Extracts instructions/comments into `help_text` field
+
+### Follow-up Question Detection
+
+Automatically detects follow-up questions based on text patterns:
+- "If you can not...", "If no...", "If not..."
+- "Please explain...", "Please detail...", "Please provide..."
+
+When detected, creates a dependency linking the follow-up to the previous question with `action="show"`.
+
+### Output Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `extraction_count` | Number of questions found |
+| `structure_analysis_time_ms` | Time for Step 1 |
+| `coverage_validation_time_ms` | Time for Step 2 |
+| `question_extraction_time_ms` | Time for Step 3 |
+| `normalization_time_ms` | Time for Step 4 |
+| `total_time_ms` | Total processing time |
+
+### Per-Question Fields
+
+| Field | Description |
+|-------|-------------|
+| `question_text` | Main question text |
+| `help_text` | Additional instructions/comments |
+| `question_type` | Detected type (yes_no, single_choice, etc.) |
+| `answers` | List of answer options |
+| `dependencies` | List of question dependencies |
+| `row_index` | Original Excel row number |
+| `sheet_name` | Source sheet |
+
+See [APPROACH_4.md](APPROACH_4.md) for detailed documentation.
+
+---
+
 ## Excel Parsing (`excel_parser.py`)
 
 The `ExcelParser` service handles all Excel file operations.
@@ -324,12 +386,14 @@ bedrock_judge_model_id = "global.anthropic.claude-3-haiku-20240307-v1:0"
 
 ## Comparison Summary
 
-| Aspect | Approach 1 | Approach 2 | Approach 3 |
-|--------|------------|------------|------------|
-| **LLM for extraction** | Yes | Yes | No |
-| **User input required** | No | Yes | Yes |
-| **Accuracy metric** | No | Yes | N/A |
-| **Confidence scores** | No | No | Yes |
-| **Speed** | Slow | Slow | Fast |
-| **Model used** | Opus/Sonnet | Opus/Sonnet | Haiku |
-| **Best for** | Unknown structure | Known structure | Validation |
+| Aspect | Approach 1 | Approach 2 | Approach 3 | Approach 4 |
+|--------|------------|------------|------------|------------|
+| **LLM for extraction** | Yes | Yes | No | Yes |
+| **User input required** | No | Yes | Yes | No |
+| **Accuracy metric** | No | Yes | N/A | No |
+| **Confidence scores** | No | No | Yes | No |
+| **Speed** | Slow | Slow | Fast | Medium |
+| **Model used** | Opus/Sonnet | Opus/Sonnet | Haiku | Opus/Sonnet |
+| **Dependencies detected** | No | No | No | Yes |
+| **Follow-up detection** | No | No | No | Yes |
+| **Best for** | Unknown structure | Known structure | Validation | Complex questionnaires |

@@ -48,12 +48,13 @@ uploadFile(file: File) → UploadResponse
 | Approach 1 | Fully automatic - no config needed |
 | Approach 2 | User-guided with column mappings |
 | Approach 3 | Deterministic parsing + LLM judge |
+| Approach 4 | Multi-step pipeline with auto structure detection |
 | Model | Opus 4.5 (default) or Sonnet 4.5 |
 | Compare Models | Run with both models side-by-side |
-| Run All | Execute all 3 approaches |
+| Run All | Execute all 4 approaches |
 
 **Conditional Navigation**:
-- Approach 1 only → Skip to Running
+- Approach 1 or 4 only → Skip to Running (no column config needed)
 - Approach 2, 3, or "Run All" → Go to Config
 
 **Next Step**: Config or Running
@@ -140,6 +141,8 @@ The comparison view is shown automatically when:
 - `TEXT` (red): Question text differs from ground truth
 - `TYPE` (orange): Question type doesn't match
 - `ANSWERS` (orange): Answer options differ
+- `ANS X/Y` or `ANS %` (warning/error): Answer count differs or partial match
+- `DEP: #N` (blue): Question depends on question at row N
 - `EXTRA` (red): Question not in ground truth
 
 **Duplicate Detection** (in ground truth column):
@@ -154,8 +157,10 @@ The comparison view is shown automatically when:
 
 **Question Details**:
 - Question text
+- Help text / instructions (if present)
 - Question type
 - Answer options (if present)
+- Dependencies (if present, with row references)
 - Confidence bar (Approach 3)
 - Unique/different highlighting in comparison mode
 - Ground truth match indicator (✓ or ✗)

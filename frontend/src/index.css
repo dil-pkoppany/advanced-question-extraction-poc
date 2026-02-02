@@ -302,6 +302,16 @@ body {
   margin-left: 0.5rem;
 }
 
+/* Comparison row hover - CSS is much faster than JS event handlers */
+.comparison-row {
+  background: white;
+  transition: background 0.1s ease-out;
+}
+
+.comparison-row:hover {
+  background: var(--bg-light) !important;
+}
+
 .confidence-bar {
   height: 4px;
   background: var(--border);

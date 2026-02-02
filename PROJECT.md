@@ -22,7 +22,9 @@ advanced-question-extraction-poc/
 │   │   │   ├── approach_auto.py       # Approach 1: Fully automatic
 │   │   │   ├── approach_guided.py     # Approach 2: User-guided
 │   │   │   ├── approach_judge.py      # Approach 3: Deterministic + judge
-│   │   │   └── APPROACHES.md          # Approaches documentation
+│   │   │   ├── approach_pipeline.py   # Approach 4: Multi-step pipeline
+│   │   │   ├── APPROACHES.md          # Approaches overview
+│   │   │   └── APPROACH_4.md          # Approach 4 detailed documentation
 │   │   ├── schemas/
 │   │   │   └── models.py              # Pydantic models
 │   │   └── evaluation/
@@ -137,6 +139,7 @@ With model comparison enabled, result files are named `approach_X_{model}_result
 |---------|-------------------|
 | Frontend Wizard Flow | [frontend/src/components/Wizard/EXTRACTION_FLOW.md](frontend/src/components/Wizard/EXTRACTION_FLOW.md) |
 | Extraction Approaches | [backend/app/services/APPROACHES.md](backend/app/services/APPROACHES.md) |
+| Approach 4 (Pipeline) | [backend/app/services/APPROACH_4.md](backend/app/services/APPROACH_4.md) |
 | Output JSON Schema | [backend/app/schemas/OUTPUT_SCHEMA.md](backend/app/schemas/OUTPUT_SCHEMA.md) |
 | History Feature | [frontend/src/components/History/HISTORY.md](frontend/src/components/History/HISTORY.md) |
 | Ground Truth | [frontend/src/components/GroundTruth/GROUND_TRUTH.md](frontend/src/components/GroundTruth/GROUND_TRUTH.md) |
