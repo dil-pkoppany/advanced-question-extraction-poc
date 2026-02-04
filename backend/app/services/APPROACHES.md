@@ -41,61 +41,68 @@ flowchart TB
 
 ## Approach 1: Fully Automatic (`approach_auto.py`)
 
-**No user input required.**
+**No user input required. Now with rich output similar to Approach 4.**
 
 ### Process
 
 1. Convert Excel to Markdown using `markitdown`
-2. Send entire content to LLM with extraction prompt
-3. Parse XML response to extract questions
+2. Send entire content to LLM with extraction prompt (rich format)
+3. Parse XML response with two-pass GUID generation and dependency resolution
+4. Return questions with dependencies, help text, and conditional inputs
 
 ### When to Use
 
 - Quick baseline extraction
 - Unknown file structure
 - First-time exploration of a questionnaire
+- Need dependency detection without structure analysis steps
 
-### Prompt Template
+### Key Features (Updated)
 
-```
-Extract ALL questions from this survey content.
+- **Dependencies detected**: Follow-up questions are linked via `depends_on` relationships
+- **Help text extraction**: Instructions/comments separated from question text
+- **Conditional inputs**: Extracts "please provide detail" prompts for specific answers
+- **Question IDs**: GUIDs generated for stable dependency references
+- **Sequence-based dependencies**: Uses `seq` numbers resolved to GUIDs
 
-EXTRACTION RULES
+### XML Output Format
 
-ANALYZE THE STRUCTURE: Identify which columns contain main questions, 
-subquestions (grouped follow-up items), and answer options.
-
-EXTRACT EVERY QUESTION FULLY: Extract each question completely. This 
-includes interrogative sentences, imperative instructions, and any 
-request for information.
-
-ANSWER OPTIONS AND CHOICE TYPES: If a question includes predefined 
-answer options (including Yes/No), list them after the question in 
-parentheses, separated by "|".
-
-GROUPED QUESTIONS: A grouped question is when a main question is 
-followed by multiple related subquestions. Extract each combination as:
-Main question:Subquestion
-
-CATEGORIES:
-- open_ended: No answer options and no subquestions
-- single_choice: Has answer options, only one can be selected
-- multiple_choice: Has answer options, multiple can be selected
-- grouped_question: Has subquestions
-- yes_no: Can only be answered with Yes or No
-
-CONTENT:
-{content}
-
-OUTPUT FORMAT:
+```xml
 <questions>
-  <q type="open_ended">Full question text</q>
-  <q type="single_choice">Question? (Option A|Option B|Option C)</q>
-  <q type="grouped_question">Question: subpart</q>
+  <q type="yes_no" seq="1">
+    <text>Do you have sustainability certifications?</text>
+    <help_text></help_text>
+    <answers><option>Yes</option><option>No</option></answers>
+    <conditional_inputs><input answer="Yes">please provide certification details</input></conditional_inputs>
+    <dependencies></dependencies>
+  </q>
+  <q type="open_ended" seq="2">
+    <text>If you do not have certifications, please explain why.</text>
+    <help_text></help_text>
+    <answers></answers>
+    <dependencies>
+      <depends_on question_seq="1" answer_value="No" action="show"/>
+    </dependencies>
+  </q>
 </questions>
-
-Return ONLY the XML.
 ```
+
+### Follow-up Question Detection
+
+Automatically detects follow-up questions based on text patterns:
+- "If you can not...", "If no...", "If not..."
+- "Please explain...", "Please detail...", "Please provide..."
+- "If applicable..."
+
+When detected, creates a dependency linking the follow-up to the previous question with `action="show"`.
+
+### Intermediate Results Saved
+
+When `run_id` is provided, saves to `intermediate_results/`:
+- `excel_as_markdown.md` - Excel converted to Markdown
+- `extraction_prompt.txt` - Full prompt sent to LLM
+- `extraction_response.xml` - Raw LLM response
+- `parsed_questions.json` - Final parsed questions
 
 ### Output Metrics
 
@@ -106,6 +113,20 @@ Return ONLY the XML.
 | `total_time_ms` | Total processing time |
 | `tokens_input` | Approximate input tokens |
 | `tokens_output` | Approximate output tokens |
+| `show_dependencies_count` | Questions with "show" dependencies |
+| `skip_dependencies_count` | Questions with "skip" dependencies |
+
+### Per-Question Fields
+
+| Field | Description |
+|-------|-------------|
+| `question_id` | Unique GUID for this question |
+| `question_text` | Main question text |
+| `help_text` | Additional instructions/comments |
+| `question_type` | Detected type (yes_no, single_choice, etc.) |
+| `answers` | List of answer options |
+| `conditional_inputs` | Map of answer values to additional prompts |
+| `dependencies` | List of question dependencies |
 
 ---
 
@@ -343,7 +364,32 @@ flowchart LR
 
 ## Response Parsing
 
-Both Approach 1 and 2 expect XML responses:
+### Approach 1 (Rich Format)
+
+Approach 1 now uses a rich XML format with nested elements:
+
+```xml
+<questions>
+  <q type="yes_no" seq="1">
+    <text>Do you have certifications?</text>
+    <help_text></help_text>
+    <answers><option>Yes</option><option>No</option></answers>
+    <conditional_inputs><input answer="Yes">provide details</input></conditional_inputs>
+    <dependencies></dependencies>
+  </q>
+</questions>
+```
+
+**Parsing logic** (`_parse_response` in approach_auto.py):
+1. Find `<questions>` tags, handle incomplete XML
+2. **First pass**: Create questions with GUIDs, build seq->GUID mapping
+3. Parse `<text>`, `<help_text>`, `<answers>/<option>`, `<conditional_inputs>`, `<dependencies>`
+4. **Second pass**: Resolve dependency references from seq numbers to GUIDs
+5. Fallback: Also handles legacy format with embedded answers in parentheses
+
+### Approach 2 (Legacy Format)
+
+Approach 2 still uses the simpler format with embedded answers:
 
 ```xml
 <questions>
@@ -353,7 +399,7 @@ Both Approach 1 and 2 expect XML responses:
 </questions>
 ```
 
-**Parsing logic** (`_parse_response`):
+**Parsing logic**:
 1. Find `<questions>` tags
 2. Handle incomplete XML (recovery)
 3. Parse with BeautifulSoup
@@ -394,6 +440,10 @@ bedrock_judge_model_id = "global.anthropic.claude-3-haiku-20240307-v1:0"
 | **Confidence scores** | No | No | Yes | No |
 | **Speed** | Slow | Slow | Fast | Medium |
 | **Model used** | Opus/Sonnet | Opus/Sonnet | Haiku | Opus/Sonnet |
-| **Dependencies detected** | No | No | No | Yes |
-| **Follow-up detection** | No | No | No | Yes |
-| **Best for** | Unknown structure | Known structure | Validation | Complex questionnaires |
+| **Dependencies detected** | Yes | No | No | Yes |
+| **Follow-up detection** | Yes | No | No | Yes |
+| **Help text extraction** | Yes | No | No | Yes |
+| **Conditional inputs** | Yes | No | No | Yes |
+| **Question IDs (GUIDs)** | Yes | No | No | Yes |
+| **Intermediate results saved** | Yes | No | No | Yes |
+| **Best for** | Quick extraction with dependencies | Known structure | Validation | Complex multi-step extraction |

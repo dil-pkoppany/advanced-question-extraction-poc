@@ -88,7 +88,7 @@ class PipelineExtractionService:
             # Step 1: Structure Analysis
             logger.info("Step 1: Analyzing structure...")
             step1_start = time.time()
-            structure = await self._analyze_structure(file_path)
+            structure = await self._analyze_structure(file_path, intermediate_dir)
             self.structure_analysis_time_ms = int((time.time() - step1_start) * 1000)
             
             if intermediate_dir:
@@ -106,7 +106,7 @@ class PipelineExtractionService:
             # Step 2: Coverage Validation
             logger.info("Step 2: Validating coverage...")
             step2_start = time.time()
-            coverage = await self._validate_coverage(structure, file_path)
+            coverage = await self._validate_coverage(structure, file_path, intermediate_dir)
             self.coverage_validation_time_ms = int((time.time() - step2_start) * 1000)
             
             if intermediate_dir:
@@ -180,7 +180,7 @@ class PipelineExtractionService:
                 ),
             )
 
-    async def _analyze_structure(self, file_path: str) -> dict[str, Any]:
+    async def _analyze_structure(self, file_path: str, intermediate_dir: Path | None = None) -> dict[str, Any]:
         """Step 1: Analyze Excel structure to identify question/answer columns."""
         # Get metadata
         metadata = self.parser.get_file_metadata(file_path)
@@ -220,8 +220,18 @@ class PipelineExtractionService:
         
         prompt = "\n".join(prompt_parts)
         
+        # Save prompt
+        if intermediate_dir:
+            prompt_file = intermediate_dir / "step1_structure_analysis_prompt.txt"
+            prompt_file.write_text(prompt)
+        
         response = await self._invoke_llm(prompt, self.model_id, "xml")
         self.total_llm_calls += 1
+        
+        # Save response
+        if intermediate_dir:
+            response_file = intermediate_dir / "step1_structure_analysis_response.xml"
+            response_file.write_text(response)
         
         if not response or not response.strip():
             logger.error("Empty response from structure analysis")
@@ -234,7 +244,7 @@ class PipelineExtractionService:
             logger.debug(f"Response was: {response[:500]}")  # Log first 500 chars for debugging
             return {"sheets": [], "confidence": 0.0}
 
-    async def _validate_coverage(self, structure: dict, file_path: str) -> dict[str, Any]:
+    async def _validate_coverage(self, structure: dict, file_path: str, intermediate_dir: Path | None = None) -> dict[str, Any]:
         """Step 2: Validate structure analysis completeness."""
         metadata = self.parser.get_file_metadata(file_path)
         
@@ -259,8 +269,18 @@ Respond in XML format:
 
 Return ONLY the XML."""
         
+        # Save prompt
+        if intermediate_dir:
+            prompt_file = intermediate_dir / "step2_coverage_validation_prompt.txt"
+            prompt_file.write_text(prompt)
+        
         response = await self._invoke_llm(prompt, self.judge_model_id, "xml")
         self.total_llm_calls += 1
+        
+        # Save response
+        if intermediate_dir:
+            response_file = intermediate_dir / "step2_coverage_validation_response.xml"
+            response_file.write_text(response)
         
         if not response or not response.strip():
             logger.warning("Empty response from coverage validation")
@@ -300,6 +320,11 @@ Return ONLY the XML."""
             
             response = await self._invoke_llm(prompt, self.model_id, "xml")
             self.total_llm_calls += 1
+            
+            # Save raw response before any modification
+            if intermediate_dir:
+                raw_response_file = intermediate_dir / f"step3_extraction_batch_{batch_num}_response_raw.xml"
+                raw_response_file.write_text(response)
             
             # Replace any sheet name in the XML with the actual sheet name
             # The LLM might output sheet="Sheet1" but we know the real sheet name

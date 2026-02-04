@@ -101,6 +101,8 @@ Respond in XML format:
 
 ### Saved Files
 
+- `intermediate_results/step1_structure_analysis_prompt.txt` - Prompt sent to LLM
+- `intermediate_results/step1_structure_analysis_response.xml` - Raw XML response from LLM
 - `intermediate_results/structure_analysis.json` - Parsed structure analysis
 
 ---
@@ -171,6 +173,8 @@ Respond in XML format:
 
 ### Saved Files
 
+- `intermediate_results/step2_coverage_validation_prompt.txt` - Prompt sent to LLM
+- `intermediate_results/step2_coverage_validation_response.xml` - Raw XML response from LLM
 - `intermediate_results/coverage_validation.json` - Parsed validation results
 
 ---
@@ -236,8 +240,9 @@ Questions are grouped by sheet - one batch per sheet. This ensures:
 
 **Dependency Format:**
 - In the LLM prompt and response, dependencies use simple row numbers (e.g., `question_row="5"`)
-- During normalization, these are converted to composite keys (`SheetName:RowNumber`) for frontend compatibility
-- This prevents ambiguity when the same row number exists in multiple sheets
+- During normalization (Step 4), these are resolved to GUIDs using a location map
+- Each question receives a unique UUID, and dependencies reference the target question's UUID
+- This ensures dependencies remain valid regardless of display order or filtering
 
 **Cross-sheet Dependencies:**
 - Currently not supported
@@ -331,35 +336,70 @@ Output XML format:
 
 ### Saved Files
 
-- `intermediate_results/step3_extraction_batch_{N}_prompt.txt` - Prompt for each batch
-- `intermediate_results/step3_question_extraction_batch_{N}.xml` - XML response for each batch
+- `intermediate_results/step3_extraction_batch_{N}_prompt.txt` - Prompt sent to LLM for each batch
+- `intermediate_results/step3_extraction_batch_{N}_response_raw.xml` - Raw XML response from LLM (before sheet name correction)
+- `intermediate_results/step3_question_extraction_batch_{N}.xml` - XML response with corrected sheet names
 - `intermediate_results/step3_question_extraction_combined.xml` - All batches combined
 
 ---
 
 ## Step 4: Normalization
 
-**Purpose**: Convert XML output from Step 3 into Python `ExtractedQuestion` objects.
+**Purpose**: Convert XML output from Step 3 into Python `ExtractedQuestion` objects with unique identifiers and resolved dependencies.
 
 **Model**: None (deterministic Python parsing)  
 **Input**: Combined XML from Step 3  
 **Output**: List of `ExtractedQuestion` objects
 
-### Processing Logic
+### Processing Logic (Two-Pass Approach)
 
+The normalization uses a two-pass approach to generate unique identifiers and resolve dependency references:
+
+**Pass 1: GUID Generation and Location Mapping**
 1. Parse XML using BeautifulSoup
-2. Extract question text, type, help text
-3. Map type strings to `QuestionType` enum
-4. Extract all answer options from `<option>` tags
-5. Parse conditional inputs from `<conditional_inputs>` tags
-6. Parse dependencies from `<dependencies>` tags
-7. Create `ExtractedQuestion` objects with all fields
+2. For each question:
+   - Generate a unique UUID (`question_id`)
+   - Build a location map: `{sheet_name}:{row_index}` → `question_id` (GUID)
+   - Extract question text, type, help text
+   - Map type strings to `QuestionType` enum
+   - Extract all answer options from `<option>` tags
+   - Parse conditional inputs from `<conditional_inputs>` tags
+   - Store raw dependency references for second pass
+
+**Pass 2: Dependency Resolution**
+1. For each question with dependencies:
+   - Look up the target question's GUID using the location map
+   - Replace `sheet:row` reference with the actual GUID
+   - Create `QuestionDependency` objects with resolved references
+
+### Sheet Name Override
+
+The LLM outputs generic sheet names (e.g., "Sheet1") because it only sees one sheet per batch. During extraction (Step 3), the backend programmatically overwrites the sheet attribute with the actual sheet name from the batch context before saving:
+
+```python
+# Replace any sheet name in the XML with the actual sheet name
+response = re.sub(
+    r'sheet="[^"]*"',
+    f'sheet="{actual_sheet_name}"',
+    response
+)
+```
+
+### Why GUIDs?
+
+Using GUIDs instead of `sheet:row` references provides several benefits:
+
+1. **Decoupled from Excel structure** - Dependencies remain valid even if questions are reordered
+2. **Frontend-friendly** - UI can look up questions by ID regardless of display order
+3. **Database-ready** - GUIDs map directly to database primary keys
+4. **No collision risk** - Unique across all sheets and extractions
 
 ### Output Format (Python Objects)
 
 ```python
 [
   ExtractedQuestion(
+    question_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890",  # Unique GUID
     question_text="Does your company have any of the following certifications?",
     question_type=QuestionType.MULTIPLE_CHOICE,
     answers=[
@@ -371,7 +411,7 @@ Output XML format:
     conditional_inputs={"Yes": "please provide detail"},
     dependencies=[
       QuestionDependency(
-        depends_on_question_id="5",
+        depends_on_question_id="f9e8d7c6-b5a4-3210-fedc-ba0987654321",  # GUID reference
         depends_on_answer_value="Yes",
         condition_type="equals",
         dependency_action="show",
@@ -379,7 +419,7 @@ Output XML format:
       )
     ],
     row_index=15,
-    sheet_name="Sheet1"
+    sheet_name="02.06"  # Actual sheet name, not "Sheet1"
   ),
   ...
 ]
@@ -401,17 +441,25 @@ Output XML format:
   "success": true,
   "questions": [
     {
+      "question_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "question_text": "Does your company have any of the following certifications?",
       "question_type": "multiple_choice",
       "answers": ["Environmental certifications...", "Labor and human rights..."],
       "help_text": null,
       "conditional_inputs": {"Yes": "please provide detail"},
-      "dependencies": [...],
+      "dependencies": [
+        {
+          "depends_on_question_id": "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
+          "depends_on_answer_value": "Yes",
+          "condition_type": "equals",
+          "dependency_action": "show"
+        }
+      ],
       "is_valid_question": true,
       "confidence": 0.98,
       "validation_issues": [],
       "row_index": 15,
-      "sheet_name": "Sheet1"
+      "sheet_name": "02.06"
     }
   ],
   "metrics": {
@@ -476,19 +524,25 @@ Output XML format:
 ```
 output/runs/{run_id}/
 ├── intermediate_results/
-│   ├── structure_analysis.json              # Step 1 output
-│   ├── coverage_validation.json             # Step 2 output
-│   ├── step3_extraction_batch_1_prompt.txt  # Step 3 prompts (one per sheet)
-│   ├── step3_extraction_batch_2_prompt.txt  # Batch N = Sheet N
-│   ├── step3_question_extraction_batch_1.xml  # Step 3 XML responses (one per sheet)
+│   ├── step1_structure_analysis_prompt.txt      # Step 1 prompt
+│   ├── step1_structure_analysis_response.xml    # Step 1 raw response
+│   ├── structure_analysis.json                  # Step 1 parsed output
+│   ├── step2_coverage_validation_prompt.txt     # Step 2 prompt
+│   ├── step2_coverage_validation_response.xml   # Step 2 raw response
+│   ├── coverage_validation.json                 # Step 2 parsed output
+│   ├── step3_extraction_batch_1_prompt.txt      # Step 3 prompts (one per sheet)
+│   ├── step3_extraction_batch_1_response_raw.xml # Step 3 raw responses (before sheet name correction)
+│   ├── step3_question_extraction_batch_1.xml    # Step 3 XML responses (with corrected sheet names)
+│   ├── step3_extraction_batch_2_prompt.txt      # Batch N = Sheet N
+│   ├── step3_extraction_batch_2_response_raw.xml
 │   ├── step3_question_extraction_batch_2.xml
-│   ├── step3_question_extraction_combined.xml  # All sheets combined
-│   └── normalized_questions.json            # Step 4 output (final)
-├── approach_4_result.json                   # Final extraction result
-└── metadata.json                            # Run metadata
+│   ├── step3_question_extraction_combined.xml   # All sheets combined
+│   └── normalized_questions.json                # Step 4 output (final)
+├── approach_4_result.json                       # Final extraction result
+└── metadata.json                                # Run metadata
 ```
 
-> **Note**: With sheet-based batching, each batch corresponds to one sheet. If an Excel file has 3 sheets with questions, there will be 3 batches.
+> **Note**: With sheet-based batching, each batch corresponds to one sheet. If an Excel file has 3 sheets with questions, there will be 3 batches. All prompts now include the actual substituted dynamic values (file metadata, structure analysis, etc.).
 
 ---
 
