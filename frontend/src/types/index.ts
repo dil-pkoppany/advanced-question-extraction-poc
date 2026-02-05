@@ -210,6 +210,7 @@ export interface GroundTruthCreate {
 
 /** Request to update an existing ground truth */
 export interface GroundTruthUpdate {
+  file_name?: string;
   created_by?: string;
   notes?: string;
   sheets?: GroundTruthSheet[];

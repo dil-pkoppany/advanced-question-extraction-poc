@@ -70,13 +70,24 @@ class ExcelParser:
         data_rows = rows[1:]
         row_count = sum(1 for row in data_rows if any(cell.strip() for cell in row if cell))
         
-        # Get sample data (first 5 data rows)
+        # Get sample data (first 30 rows, first 10 columns, truncate long values)
+        MAX_SAMPLE_ROWS = 30
+        MAX_SAMPLE_COLS = 10
+        MAX_CELL_LENGTH = 200
         sample_data = []
-        for row in data_rows[:5]:
+        for row in data_rows[:MAX_SAMPLE_ROWS]:
             row_data = {}
             for col_idx, value in enumerate(row):
+                if col_idx >= MAX_SAMPLE_COLS:
+                    break  # Only include first 10 columns
                 if col_idx < len(columns):
-                    row_data[columns[col_idx]] = value.strip() if value and value.strip() else None
+                    if value and value.strip():
+                        cell_str = value.strip()
+                        if len(cell_str) > MAX_CELL_LENGTH:
+                            cell_str = cell_str[:MAX_CELL_LENGTH] + "..."
+                        row_data[columns[col_idx]] = cell_str
+                    else:
+                        row_data[columns[col_idx]] = None
             if any(v is not None for v in row_data.values()):
                 sample_data.append(row_data)
         
@@ -112,15 +123,24 @@ class ExcelParser:
                 if any(cell.value is not None for cell in row):
                     row_count += 1
 
-            # Get sample data (first 5 rows)
+            # Get sample data (first 30 rows, first 10 columns, truncate long values)
+            MAX_SAMPLE_ROWS = 30
+            MAX_SAMPLE_COLS = 10
+            MAX_CELL_LENGTH = 200  # Truncate long cell values
             sample_data = []
-            for row_idx, row in enumerate(ws.iter_rows(min_row=2, max_row=6)):
+            for row_idx, row in enumerate(ws.iter_rows(min_row=2, max_row=MAX_SAMPLE_ROWS + 1)):
                 row_data = {}
                 for col_idx, cell in enumerate(row):
+                    if col_idx >= MAX_SAMPLE_COLS:
+                        break  # Only include first 10 columns
                     if col_idx < len(columns):
-                        row_data[columns[col_idx]] = (
-                            str(cell.value) if cell.value is not None else None
-                        )
+                        if cell.value is not None:
+                            cell_str = str(cell.value)
+                            if len(cell_str) > MAX_CELL_LENGTH:
+                                cell_str = cell_str[:MAX_CELL_LENGTH] + "..."
+                            row_data[columns[col_idx]] = cell_str
+                        else:
+                            row_data[columns[col_idx]] = None
                 if any(v is not None for v in row_data.values()):
                     sample_data.append(row_data)
 

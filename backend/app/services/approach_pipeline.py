@@ -26,8 +26,18 @@ from ..schemas import (
     ExtractionMetrics,
     QuestionType,
     QuestionDependency,
+    SheetMetadata,
 )
 from .excel_parser import ExcelParser
+
+# Sonnet 4.5 token limits for structure analysis chunking
+SONNET_MAX_INPUT_TOKENS = 180000  # Reserve 20K for output from 200K context
+CHARS_PER_TOKEN = 4  # Conservative estimate
+MAX_INPUT_CHARS = SONNET_MAX_INPUT_TOKENS * CHARS_PER_TOKEN  # 720K chars
+
+# Per-sheet extraction limits
+MAX_SAMPLE_COLS = 10
+MAX_SAMPLE_ROWS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +70,129 @@ class PipelineExtractionService:
         self.coverage_validation_time_ms = 0
         self.extraction_time_ms = 0
         self.normalization_time_ms = 0
+
+    def _estimate_sheet_chars(self, sheet: SheetMetadata) -> int:
+        """Estimate character count for a sheet's prompt contribution.
+        
+        Uses first 10 columns and 30 rows of sample data for estimation.
+        """
+        estimated = len(f"\nSheet: {sheet.name}\n")
+        estimated += len(f"Columns: {', '.join(sheet.columns[:MAX_SAMPLE_COLS])}\n")
+        estimated += len(f"Row count: {sheet.row_count}\n")
+        estimated += len("Sample rows:\n")
+        
+        for idx, row in enumerate(sheet.sample_data[:MAX_SAMPLE_ROWS]):
+            # Only include first 10 columns in the row data
+            limited_row = {k: v for i, (k, v) in enumerate(row.items()) if i < MAX_SAMPLE_COLS}
+            estimated += len(f"  Row {idx + 2}: {json.dumps(limited_row, default=str)}\n")
+        
+        return estimated
+
+    def _chunk_sheets_for_structure_analysis(
+        self,
+        metadata: list[SheetMetadata],
+        max_chars: int = MAX_INPUT_CHARS
+    ) -> list[list[SheetMetadata]]:
+        """Group sheets into chunks that fit within token limit.
+        
+        Rules:
+        - Never split a sheet in half
+        - Estimate size based on columns + 30 rows of sample data
+        - If a single sheet exceeds limit, it goes alone (may need truncation)
+        - Greedily add sheets until approaching limit
+        
+        Args:
+            metadata: List of sheet metadata from Excel file
+            max_chars: Maximum characters per chunk (default: Sonnet 4.5 safe limit)
+            
+        Returns:
+            List of chunks, each chunk is a list of SheetMetadata objects
+        """
+        if not metadata:
+            return []
+        
+        # Reserve space for prompt template (instructions, XML format example)
+        prompt_overhead = 1500  # Approximate chars for prompt instructions
+        available_chars = max_chars - prompt_overhead
+        
+        chunks: list[list[SheetMetadata]] = []
+        current_chunk: list[SheetMetadata] = []
+        current_chunk_size = 0
+        
+        for sheet in metadata:
+            sheet_size = self._estimate_sheet_chars(sheet)
+            
+            # If adding this sheet would exceed limit, start new chunk
+            if current_chunk_size + sheet_size > available_chars:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                # Start new chunk with this sheet
+                current_chunk = [sheet]
+                current_chunk_size = sheet_size
+            else:
+                # Add to current chunk
+                current_chunk.append(sheet)
+                current_chunk_size += sheet_size
+        
+        # Don't forget the last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        logger.info(f"Chunked {len(metadata)} sheets into {len(chunks)} chunk(s) for structure analysis")
+        return chunks
+
+    def _build_structure_prompt(self, sheets: list[SheetMetadata]) -> str:
+        """Build the structure analysis prompt for a chunk of sheets.
+        
+        Args:
+            sheets: List of SheetMetadata objects to include in the prompt
+            
+        Returns:
+            Complete prompt string for structure analysis
+        """
+        prompt_parts = [
+            "Analyze this Excel file structure and identify for EACH sheet:",
+            "1. Which columns contain questions (question_column)",
+            "2. Which columns contain answer values/checkboxes (answer_column) - often TRUE/FALSE or checkbox values",
+            "3. Which columns contain answer option TEXT/labels (answer_options_column) - the human-readable text for each answer choice",
+            "4. Header row location",
+            "5. Data start row (where actual questions begin - may be row 30+ in some files)",
+            "",
+            "IMPORTANT: answer_column and answer_options_column may be DIFFERENT columns:",
+            "- answer_column: Contains the actual answer values (TRUE/FALSE, checkbox states, selected values)",
+            "- answer_options_column: Contains the TEXT labels describing each answer option",
+            "For checkbox-based surveys, the checkbox alt-text/labels are often in a separate column from the checkbox values.",
+            "",
+            "Sheets:",
+        ]
+        
+        for sheet in sheets:
+            prompt_parts.append(f"\nSheet: {sheet.name}")
+            prompt_parts.append(f"Columns: {', '.join(sheet.columns[:MAX_SAMPLE_COLS])}")
+            prompt_parts.append(f"Row count: {sheet.row_count}")
+            if sheet.sample_data:
+                prompt_parts.append(f"Sample rows (first {min(len(sheet.sample_data), MAX_SAMPLE_ROWS)}):")
+                for idx, row in enumerate(sheet.sample_data[:MAX_SAMPLE_ROWS]):
+                    # Only include first 10 columns in the row data
+                    limited_row = {k: v for i, (k, v) in enumerate(row.items()) if i < MAX_SAMPLE_COLS}
+                    prompt_parts.append(f"  Row {idx + 2}: {json.dumps(limited_row, default=str)}")
+        
+        prompt_parts.extend([
+            "",
+            "Respond in XML format:",
+            "<structure_analysis>",
+            '  <sheet sheet_name="SheetName" header_row="1" data_start_row="2" confidence="0.95">',
+            '    <columns question_column="Column_5" answer_column="Column_6" answer_options_column="Column_7" type_column="" instruction_column=""/>',
+            '    <structure_notes>Questions in column 5, checkbox values in column 6, answer option text/labels in column 7</structure_notes>',
+            "  </sheet>",
+            "</structure_analysis>",
+            "",
+            "IMPORTANT: Include a <sheet> element for EACH sheet in the input.",
+            "IMPORTANT: answer_options_column should contain the TEXT labels for answer choices, which may be different from answer_column (checkbox values).",
+            "Return ONLY the XML."
+        ])
+        
+        return "\n".join(prompt_parts)
 
     async def extract(self, file_path: str, run_id: str | None = None) -> ExtractionResult:
         """
@@ -181,68 +314,94 @@ class PipelineExtractionService:
             )
 
     async def _analyze_structure(self, file_path: str, intermediate_dir: Path | None = None) -> dict[str, Any]:
-        """Step 1: Analyze Excel structure to identify question/answer columns."""
-        # Get metadata
+        """Step 1: Analyze Excel structure to identify question/answer columns.
+        
+        Uses chunked processing to handle large files with many sheets.
+        Each chunk contains complete sheets (never split) that fit within
+        Sonnet 4.5's token limit.
+        """
+        # Get metadata for all sheets
         metadata = self.parser.get_file_metadata(file_path)
         
-        # Build concise prompt with sample data
-        prompt_parts = [
-            "Analyze this Excel file structure and identify:",
-            "1. Which columns contain questions",
-            "2. Which columns contain answer options",
-            "3. Header row location",
-            "4. Data start row",
-            "",
-            "Sheets:",
-        ]
-        
-        for sheet in metadata:
-            prompt_parts.append(f"\nSheet: {sheet.name}")
-            prompt_parts.append(f"Columns: {', '.join(sheet.columns[:10])}")  # Limit to first 10 columns
-            prompt_parts.append(f"Row count: {sheet.row_count}")
-            if sheet.sample_data:
-                prompt_parts.append("Sample rows (first 3):")
-                for idx, row in enumerate(sheet.sample_data[:3]):
-                    prompt_parts.append(f"  Row {idx + 2}: {json.dumps(row, default=str)}")
-        
-        prompt_parts.extend([
-            "",
-            "Respond in XML format:",
-            "<structure_analysis>",
-            '  <sheet sheet_name="Sheet1" header_row="1" data_start_row="2" confidence="0.95">',
-            '    <columns question_column="Column_5" answer_column="Column_6" type_column="" instruction_column=""/>',
-            '    <structure_notes>Questions in column 5, answers in column 6</structure_notes>',
-            "  </sheet>",
-            "</structure_analysis>",
-            "",
-            "Return ONLY the XML."
-        ])
-        
-        prompt = "\n".join(prompt_parts)
-        
-        # Save prompt
-        if intermediate_dir:
-            prompt_file = intermediate_dir / "step1_structure_analysis_prompt.txt"
-            prompt_file.write_text(prompt)
-        
-        response = await self._invoke_llm(prompt, self.model_id, "xml")
-        self.total_llm_calls += 1
-        
-        # Save response
-        if intermediate_dir:
-            response_file = intermediate_dir / "step1_structure_analysis_response.xml"
-            response_file.write_text(response)
-        
-        if not response or not response.strip():
-            logger.error("Empty response from structure analysis")
+        if not metadata:
+            logger.error("No sheets found in file")
             return {"sheets": [], "confidence": 0.0}
         
-        try:
-            return self._parse_structure_xml(response)
-        except Exception as e:
-            logger.error(f"Failed to parse structure analysis: {e}")
-            logger.debug(f"Response was: {response[:500]}")  # Log first 500 chars for debugging
+        # Chunk sheets by token limit
+        chunks = self._chunk_sheets_for_structure_analysis(metadata)
+        
+        if not chunks:
+            logger.error("Failed to chunk sheets")
             return {"sheets": [], "confidence": 0.0}
+        
+        all_sheets: list[dict] = []
+        total_confidence = 0.0
+        chunk_count = len(chunks)
+        
+        logger.info(f"Processing {len(metadata)} sheets in {chunk_count} chunk(s)")
+        
+        for chunk_idx, sheet_chunk in enumerate(chunks):
+            chunk_num = chunk_idx + 1
+            sheet_names = [s.name for s in sheet_chunk]
+            logger.info(f"Processing chunk {chunk_num}/{chunk_count}: sheets {sheet_names}")
+            
+            # Build prompt for this chunk's sheets
+            prompt = self._build_structure_prompt(sheet_chunk)
+            
+            # Save prompt
+            if intermediate_dir:
+                if chunk_count == 1:
+                    # Single chunk - use original filename for backward compatibility
+                    prompt_file = intermediate_dir / "step1_structure_analysis_prompt.txt"
+                else:
+                    prompt_file = intermediate_dir / f"step1_structure_chunk_{chunk_num}_prompt.txt"
+                prompt_file.write_text(prompt)
+            
+            # Call LLM
+            try:
+                response = await self._invoke_llm(prompt, self.model_id, "xml")
+                self.total_llm_calls += 1
+            except Exception as e:
+                logger.error(f"LLM call failed for chunk {chunk_num}: {e}")
+                continue
+            
+            # Save response
+            if intermediate_dir:
+                if chunk_count == 1:
+                    response_file = intermediate_dir / "step1_structure_analysis_response.xml"
+                else:
+                    response_file = intermediate_dir / f"step1_structure_chunk_{chunk_num}_response.xml"
+                response_file.write_text(response)
+            
+            if not response or not response.strip():
+                logger.warning(f"Empty response from chunk {chunk_num}")
+                continue
+            
+            # Parse and merge results
+            try:
+                result = self._parse_structure_xml(response)
+                chunk_sheets = result.get("sheets", [])
+                chunk_confidence = result.get("confidence", 0.0)
+                
+                all_sheets.extend(chunk_sheets)
+                total_confidence += chunk_confidence
+                
+                logger.info(f"Chunk {chunk_num}: found {len(chunk_sheets)} sheet structure(s), confidence={chunk_confidence}")
+            except Exception as e:
+                logger.error(f"Failed to parse structure analysis for chunk {chunk_num}: {e}")
+                logger.debug(f"Response was: {response[:500]}")
+        
+        # Calculate average confidence
+        avg_confidence = total_confidence / chunk_count if chunk_count > 0 else 0.0
+        
+        merged_result = {
+            "sheets": all_sheets,
+            "confidence": avg_confidence,
+        }
+        
+        logger.info(f"Structure analysis complete: {len(all_sheets)} sheets, avg confidence={avg_confidence:.2f}")
+        
+        return merged_result
 
     async def _validate_coverage(self, structure: dict, file_path: str, intermediate_dir: Path | None = None) -> dict[str, Any]:
         """Step 2: Validate structure analysis completeness."""
@@ -378,6 +537,7 @@ Return ONLY the XML."""
                 columns = sheet_info.get("columns", {})
                 question_col = columns.get("question_column")
                 answer_col = columns.get("answer_column")
+                answer_options_col = columns.get("answer_options_column")
                 data_start = sheet_info.get("data_start_row", 2)
                 
                 if not question_col:
@@ -387,6 +547,7 @@ Return ONLY the XML."""
                 header_row = list(ws[1])
                 q_col_idx = None
                 a_col_idx = None
+                ao_col_idx = None  # answer options column index
                 
                 for idx, cell in enumerate(header_row):
                     col_name = str(cell.value) if cell.value else f"Unnamed: {idx}"
@@ -394,6 +555,8 @@ Return ONLY the XML."""
                         q_col_idx = idx
                     if answer_col and col_name == answer_col:
                         a_col_idx = idx
+                    if answer_options_col and col_name == answer_options_col:
+                        ao_col_idx = idx
                 
                 if q_col_idx is None:
                     continue
@@ -410,22 +573,28 @@ Return ONLY the XML."""
                     q_cell = row[q_col_idx] if q_col_idx < len(row) else None
                     question_text = str(q_cell.value).strip() if q_cell and q_cell.value else ""
                     
-                    # Check if this row has a question or if it's a continuation (empty question cell but has answer)
+                    # Determine which column to check for answer option text in continuation rows
+                    # Prefer answer_options_column over answer_column
+                    continuation_col_idx = ao_col_idx if ao_col_idx is not None else a_col_idx
+                    
+                    # Check if this row has a question or if it's a continuation (empty question cell but has answer option)
                     if not question_text or question_text == "-":
-                        # Check if answer column has a value - might be continuation of previous question
-                        if a_col_idx is not None and a_col_idx < len(row):
-                            answer_cell = row[a_col_idx]
-                            if answer_cell and answer_cell.value:
-                                # This might be a continuation row - check previous row
-                                if sheet_batch and sheet_batch[-1].get("row") == row_idx - 1:
-                                    # Add this as an additional answer option to previous question
-                                    answer_text = str(answer_cell.value).strip()
-                                    if "answer_options" not in sheet_batch[-1]:
-                                        sheet_batch[-1]["answer_options"] = []
-                                    if answer_text:
-                                        sheet_batch[-1]["answer_options"].append(answer_text)
-                                    row_idx += 1
-                                    continue
+                        # Check if answer options column has a value - might be continuation of previous question
+                        if continuation_col_idx is not None and continuation_col_idx < len(row):
+                            option_cell = row[continuation_col_idx]
+                            if option_cell and option_cell.value:
+                                option_text = str(option_cell.value).strip()
+                                # Don't treat TRUE/FALSE as answer options
+                                if option_text.upper() not in ("TRUE", "FALSE"):
+                                    # This might be a continuation row - check previous row
+                                    if sheet_batch and sheet_batch[-1].get("row") == row_idx - 1:
+                                        # Add this as an additional answer option to previous question
+                                        if "answer_options" not in sheet_batch[-1]:
+                                            sheet_batch[-1]["answer_options"] = []
+                                        if option_text:
+                                            sheet_batch[-1]["answer_options"].append(option_text)
+                                        row_idx += 1
+                                        continue
                         row_idx += 1
                         continue
                     
@@ -437,16 +606,28 @@ Return ONLY the XML."""
                         "answer_options": [],  # For multiple choice questions
                     }
                     
-                    # Answer cell (first option)
+                    # Determine which column to use for answer option TEXT
+                    # Prefer answer_options_column (contains text labels) over answer_column (may contain TRUE/FALSE)
+                    option_text_col_idx = ao_col_idx if ao_col_idx is not None else a_col_idx
+                    
+                    # Answer cell value (from answer_column - may be TRUE/FALSE)
                     if a_col_idx is not None and a_col_idx < len(row):
                         answer_cell = row[a_col_idx]
                         if answer_cell and answer_cell.value:
-                            answer_text = str(answer_cell.value).strip()
-                            context["answer_cell"] = answer_text
-                            context["answer_options"].append(answer_text)
+                            answer_value = str(answer_cell.value).strip()
+                            context["answer_cell"] = answer_value
+                    
+                    # Answer option TEXT (from answer_options_column if available, else answer_column)
+                    if option_text_col_idx is not None and option_text_col_idx < len(row):
+                        option_cell = row[option_text_col_idx]
+                        if option_cell and option_cell.value:
+                            option_text = str(option_cell.value).strip()
+                            # Don't add TRUE/FALSE as answer options text
+                            if option_text.upper() not in ("TRUE", "FALSE"):
+                                context["answer_options"].append(option_text)
                     
                     # Check for multiple-choice pattern: look ahead for continuation rows
-                    # A continuation row has: empty question column but answer column has value
+                    # A continuation row has: empty question column but answer/option column has value
                     # Allow skipping over empty gap rows (up to MAX_GAP_ROWS consecutive empty rows)
                     MAX_GAP_ROWS = 5  # Allow up to 5 consecutive empty rows between answer options
                     lookahead_idx = row_idx + 1
@@ -459,20 +640,23 @@ Return ONLY the XML."""
                         lookahead_q_cell = lookahead_row[q_col_idx] if q_col_idx < len(lookahead_row) else None
                         lookahead_q_text = str(lookahead_q_cell.value).strip() if lookahead_q_cell and lookahead_q_cell.value else ""
                         
-                        # Check answer column
-                        lookahead_answer_text = ""
-                        if a_col_idx is not None and a_col_idx < len(lookahead_row):
-                            lookahead_a_cell = lookahead_row[a_col_idx]
-                            if lookahead_a_cell and lookahead_a_cell.value:
-                                lookahead_answer_text = str(lookahead_a_cell.value).strip()
+                        # Check for answer option TEXT (prefer answer_options_column, fallback to answer_column)
+                        lookahead_option_text = ""
+                        if option_text_col_idx is not None and option_text_col_idx < len(lookahead_row):
+                            lookahead_option_cell = lookahead_row[option_text_col_idx]
+                            if lookahead_option_cell and lookahead_option_cell.value:
+                                text = str(lookahead_option_cell.value).strip()
+                                # Don't treat TRUE/FALSE as answer option text
+                                if text.upper() not in ("TRUE", "FALSE"):
+                                    lookahead_option_text = text
                         
                         # Case 1: Question column has content = new question, stop
                         if lookahead_q_text and lookahead_q_text != "-":
                             break
                         
-                        # Case 2: Empty question but has answer = continuation row
-                        if lookahead_answer_text:
-                            context["answer_options"].append(lookahead_answer_text)
+                        # Case 2: Empty question but has answer option text = continuation row
+                        if lookahead_option_text:
+                            context["answer_options"].append(lookahead_option_text)
                             consecutive_empty_rows = 0  # Reset gap counter
                             lookahead_idx += 1
                         else:
@@ -534,11 +718,15 @@ Return ONLY the XML."""
             prompt_parts.append(f"\nRow {row_data['row']}:")
             prompt_parts.append(f"  [question] {row_data['question_cell']}")
             if row_data.get('answer_cell'):
-                prompt_parts.append(f"  [answer] {row_data['answer_cell']}")
-            # Show all answer options for multiple-choice questions
-            if row_data.get('answer_options') and len(row_data['answer_options']) > 1:
-                prompt_parts.append(f"  [all_answer_options] {' | '.join(row_data['answer_options'])}")
-                prompt_parts.append(f"  [NOTE] This question has {len(row_data['answer_options'])} answer options - it is likely multiple_choice")
+                prompt_parts.append(f"  [answer_value] {row_data['answer_cell']}")
+            # Show all answer options (text labels for answer choices)
+            answer_options = row_data.get('answer_options', [])
+            if answer_options:
+                if len(answer_options) == 1:
+                    prompt_parts.append(f"  [answer_option_text] {answer_options[0]}")
+                else:
+                    prompt_parts.append(f"  [answer_options_text] {' | '.join(answer_options)}")
+                    prompt_parts.append(f"  [NOTE] This question has {len(answer_options)} answer options - likely single_choice or multiple_choice")
         
         prompt_parts.extend([
             "",
@@ -816,8 +1004,11 @@ Return ONLY the XML."""
                     columns = {
                         "question_column": columns_tag.get("question_column", ""),
                         "answer_column": columns_tag.get("answer_column") or None,
+                        "answer_options_column": columns_tag.get("answer_options_column") or None,
                         "type_column": columns_tag.get("type_column") or None,
                         "instruction_column": columns_tag.get("instruction_column") or None,
+                        "additional_answer_column": columns_tag.get("additional_answer_column") or None,
+                        "followup_column": columns_tag.get("followup_column") or None,
                     }
                 
                 structure_notes_tag = sheet_tag.find("structure_notes")

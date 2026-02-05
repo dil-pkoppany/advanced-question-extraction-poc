@@ -29,37 +29,71 @@ Step 4: Normalization → Python objects (final output)
 **Temperature**: 0.1  
 **Response Format**: XML
 
+### Chunked Processing
+
+For files with many sheets, Step 1 uses **chunked processing** to stay within Sonnet 4.5's context limit:
+
+- **Token Budget**: 180K input tokens (~720K characters) reserved per chunk
+- **Sheet Sampling**: First 10 columns, first 30 rows per sheet
+- **Chunking Rules**:
+  - Sheets are never split - each sheet stays whole
+  - Sheets are grouped into chunks until token limit is reached
+  - If a single sheet exceeds the limit, it goes in its own chunk
+  - Multiple LLM calls are made for multiple chunks
+  - Results are merged across all chunks
+
+```
+# Token constants
+SONNET_MAX_INPUT_TOKENS = 180000  # Reserve 20K for output
+CHARS_PER_TOKEN = 4
+MAX_INPUT_CHARS = 720000  # 180K * 4
+
+# Per-sheet limits
+MAX_SAMPLE_COLS = 10
+MAX_SAMPLE_ROWS = 30
+```
+
 ### Input Parameters
 
 - **file_path**: Path to Excel file
-- **Metadata**: Sheet names, column headers, row counts, sample data (first 3 rows per sheet)
+- **Per-Sheet Data**: Sheet name, column headers (first 10), row count, sample data (first 30 rows, first 10 columns)
 
 ### Prompt Structure
 
 ```
-Analyze this Excel file structure and identify:
-1. Which columns contain questions
-2. Which columns contain answer options
-3. Header row location
-4. Data start row
+Analyze this Excel file structure and identify for EACH sheet:
+1. Which columns contain questions (question_column)
+2. Which columns contain answer values/checkboxes (answer_column) - often TRUE/FALSE or checkbox values
+3. Which columns contain answer option TEXT/labels (answer_options_column) - the human-readable text for each answer choice
+4. Header row location
+5. Data start row (where actual questions begin - may be row 30+ in some files)
+
+IMPORTANT: answer_column and answer_options_column may be DIFFERENT columns:
+- answer_column: Contains the actual answer values (TRUE/FALSE, checkbox states, selected values)
+- answer_options_column: Contains the TEXT labels describing each answer option
+For checkbox-based surveys, the checkbox alt-text/labels are often in a separate column from the checkbox values.
 
 Sheets:
-[For each sheet:]
+[For each sheet in chunk:]
 Sheet: [name]
-Columns: [column names]
+Columns: [first 10 column names]
 Row count: [count]
-Sample rows (first 3):
-  Row 2: [sample data]
+Sample rows (first 30):
+  Row 2: [sample data - first 10 columns as JSON]
   Row 3: [sample data]
-  Row 4: [sample data]
+  ...
+  Row 31: [sample data]
 
 Respond in XML format:
 <structure_analysis>
-  <sheet sheet_name="Sheet1" header_row="1" data_start_row="2" confidence="0.95">
-    <columns question_column="Column_5" answer_column="Column_6" type_column="" instruction_column=""/>
-    <structure_notes>Questions in column 5, answers in column 6</structure_notes>
+  <sheet sheet_name="SheetName" header_row="1" data_start_row="2" confidence="0.95">
+    <columns question_column="Column_5" answer_column="Column_6" answer_options_column="Column_7" type_column="" instruction_column=""/>
+    <structure_notes>Questions in column 5, checkbox values in column 6, answer option text/labels in column 7</structure_notes>
   </sheet>
 </structure_analysis>
+
+IMPORTANT: Include a <sheet> element for EACH sheet in the input.
+IMPORTANT: answer_options_column should contain the TEXT labels for answer choices, which may be different from answer_column (checkbox values).
 ```
 
 ### Output Format (XML)
@@ -70,9 +104,10 @@ Respond in XML format:
     <columns 
       question_column="Column_5" 
       answer_column="Column_6" 
+      answer_options_column="Column_7"
       type_column="" 
       instruction_column=""/>
-    <structure_notes>Questions in column 5, answers in column 6</structure_notes>
+    <structure_notes>Questions in column 5, checkbox values in column 6, answer option text in column 7</structure_notes>
   </sheet>
 </structure_analysis>
 ```
@@ -89,10 +124,11 @@ Respond in XML format:
       "columns": {
         "question_column": "Column_5",
         "answer_column": "Column_6",
+        "answer_options_column": "Column_7",
         "type_column": null,
         "instruction_column": null
       },
-      "structure_notes": "Questions in column 5, answers in column 6"
+      "structure_notes": "Questions in column 5, checkbox values in column 6, answer option text in column 7"
     }
   ],
   "confidence": 0.95
@@ -101,9 +137,15 @@ Respond in XML format:
 
 ### Saved Files
 
+**Single chunk (most files):**
 - `intermediate_results/step1_structure_analysis_prompt.txt` - Prompt sent to LLM
 - `intermediate_results/step1_structure_analysis_response.xml` - Raw XML response from LLM
-- `intermediate_results/structure_analysis.json` - Parsed structure analysis
+- `intermediate_results/structure_analysis.json` - Parsed structure analysis (merged)
+
+**Multiple chunks (large files):**
+- `intermediate_results/step1_structure_chunk_{N}_prompt.txt` - Prompt for chunk N
+- `intermediate_results/step1_structure_chunk_{N}_response.xml` - Response for chunk N
+- `intermediate_results/structure_analysis.json` - Merged results from all chunks
 
 ---
 
@@ -194,20 +236,23 @@ Respond in XML format:
 - **structure**: Structure analysis from Step 1
 - **file_path**: Path to Excel file
 - **Context Extraction**: For each question row, extracts:
-  - `[question]` - Question cell content from the column identified in Step 1
-  - `[answer]` - First answer option from the column identified in Step 1
-  - `[all_answer_options]` - All answer options when multiple rows belong to the same question
+  - `[question]` - Question cell content from the question_column identified in Step 1
+  - `[answer_value]` - Value from answer_column (may be TRUE/FALSE for checkboxes)
+  - `[answer_option_text]` - Single answer option text label from answer_options_column
+  - `[answer_options_text]` - Multiple answer options text when question spans multiple rows
 
-> **Design Note**: Step 1 identifies the specific question and answer columns, so we don't extract generic "adjacent cells". The number of answer options (`[all_answer_options]`) is the primary signal for determining question type (single_choice vs multiple_choice).
+> **Design Note**: Step 1 identifies distinct columns for answer values (`answer_column`) and answer option text labels (`answer_options_column`). This separation is important for checkbox-based surveys where the checkbox values (TRUE/FALSE) are in a different column from the checkbox alt-text labels. The number of answer options is the primary signal for determining question type (single_choice vs multiple_choice).
 
 ### Multiple-Choice Detection
 
 The extraction logic detects when multiple rows belong to the same question:
-- If question column is empty but answer column has value → continuation row
+- Prefers `answer_options_column` (text labels) over `answer_column` (values) for option text
+- If question column is empty but answer options column has text → continuation row
+- TRUE/FALSE values are filtered out from answer option text (treated as checkbox values, not labels)
 - **Gap Tolerance**: Skips over up to 5 consecutive empty rows between answer options
 - Looks ahead up to 30 rows to find all answer options
 - Stops when a new question is found (non-empty question column)
-- Collects all answer options into `answer_options` list
+- Collects all answer option text into `answer_options` list
 
 ### Follow-up Question Detection
 
@@ -279,9 +324,9 @@ Question type guidelines:
 Rows:
 Row 15:
   [question] Does your company have any of the following certifications?
-  [answer] Environmental certifications, such as ISO 50001, ISO 14001, EMAS
-  [all_answer_options] Environmental certifications | Labor and human rights certifications | Business ethics certification(s)
-  [NOTE] This question has 3 answer options - it is likely multiple_choice
+  [answer_value] TRUE
+  [answer_options_text] Environmental certifications | Labor and human rights certifications | Business ethics certification(s)
+  [NOTE] This question has 3 answer options - likely single_choice or multiple_choice
 
 Output XML format:
 <questions>
@@ -499,9 +544,11 @@ Using GUIDs instead of `sheet:row` references provides several benefits:
 
 ### Multiple-Choice Detection
 - Automatically detects when questions span multiple rows
-- Groups continuation rows (empty question column, but answer column has value)
+- Distinguishes between `answer_column` (values like TRUE/FALSE) and `answer_options_column` (text labels)
+- Groups continuation rows (empty question column, but answer options column has text)
+- Filters out TRUE/FALSE values from answer option text
 - Tolerates up to 5 consecutive empty gap rows between answer options
-- Collects all answer options from grouped rows
+- Collects all answer option text from grouped rows
 
 ### Conditional Instructions
 - Extracts instructions like "Yes (please provide detail)"
@@ -524,9 +571,13 @@ Using GUIDs instead of `sheet:row` references provides several benefits:
 ```
 output/runs/{run_id}/
 ├── intermediate_results/
-│   ├── step1_structure_analysis_prompt.txt      # Step 1 prompt
-│   ├── step1_structure_analysis_response.xml    # Step 1 raw response
-│   ├── structure_analysis.json                  # Step 1 parsed output
+│   ├── step1_structure_analysis_prompt.txt      # Step 1 prompt (single chunk)
+│   ├── step1_structure_analysis_response.xml    # Step 1 raw response (single chunk)
+│   ├── step1_structure_chunk_1_prompt.txt       # Step 1 chunk 1 prompt (multi-chunk)
+│   ├── step1_structure_chunk_1_response.xml     # Step 1 chunk 1 response (multi-chunk)
+│   ├── step1_structure_chunk_2_prompt.txt       # Step 1 chunk 2 prompt (multi-chunk)
+│   ├── step1_structure_chunk_2_response.xml     # Step 1 chunk 2 response (multi-chunk)
+│   ├── structure_analysis.json                  # Step 1 merged output
 │   ├── step2_coverage_validation_prompt.txt     # Step 2 prompt
 │   ├── step2_coverage_validation_response.xml   # Step 2 raw response
 │   ├── coverage_validation.json                 # Step 2 parsed output
@@ -542,7 +593,10 @@ output/runs/{run_id}/
 └── metadata.json                                # Run metadata
 ```
 
-> **Note**: With sheet-based batching, each batch corresponds to one sheet. If an Excel file has 3 sheets with questions, there will be 3 batches. All prompts now include the actual substituted dynamic values (file metadata, structure analysis, etc.).
+> **Note**: 
+> - **Step 1 chunking**: For files with many sheets, Step 1 uses chunked processing. Single-chunk files use the original filenames (`step1_structure_analysis_*`), while multi-chunk files use numbered filenames (`step1_structure_chunk_N_*`).
+> - **Step 3 batching**: Each batch corresponds to one sheet. If an Excel file has 3 sheets with questions, there will be 3 batches.
+> - All prompts include the actual substituted dynamic values (file metadata, structure analysis, etc.).
 
 ---
 

@@ -17,6 +17,7 @@ import type {
 interface GroundTruthEditorProps {
   existingData?: GroundTruth;
   fileMetadata?: FileMetadata | null;
+  existingFileNames?: string[]; // Lowercase normalized names of all ground truths
   onSave: () => void;
   onCancel: () => void;
 }
@@ -32,6 +33,7 @@ const QUESTION_TYPES: { value: QuestionType; label: string }[] = [
 export function GroundTruthEditor({
   existingData,
   fileMetadata: initialFileMetadata,
+  existingFileNames = [],
   onSave,
   onCancel,
 }: GroundTruthEditorProps) {
@@ -275,6 +277,21 @@ export function GroundTruthEditor({
       return;
     }
 
+    // Validate file name doesn't collide with other ground truths
+    const normalizedNewName = fileName.trim().toLowerCase();
+    const originalNormalizedName = existingData?.file_name.toLowerCase();
+    
+    // Check if name changed and conflicts with another ground truth
+    if (isEditing && normalizedNewName !== originalNormalizedName) {
+      if (existingFileNames.includes(normalizedNewName)) {
+        setError('A ground truth with this file name already exists. Please choose a different name.');
+        return;
+      }
+    } else if (!isEditing && existingFileNames.includes(normalizedNewName)) {
+      setError('A ground truth with this file name already exists. Please choose a different name.');
+      return;
+    }
+
     // Validate all questions have text
     for (const sheet of sheets) {
       for (const q of sheet.questions) {
@@ -300,6 +317,7 @@ export function GroundTruthEditor({
       updateMutation.mutate({
         id: existingData.ground_truth_id,
         data: {
+          file_name: fileName.trim(),
           created_by: createdBy.trim(),
           notes: notes?.trim() || undefined,
           sheets: cleanedSheets,
@@ -399,14 +417,29 @@ export function GroundTruthEditor({
           
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">File Name</label>
+              <label className="form-label">
+                File Name *
+                {isEditing && (
+                  <span style={{ fontSize: '0.75rem', fontWeight: '400', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
+                    (editable)
+                  </span>
+                )}
+              </label>
               <input
                 type="text"
                 className="form-input"
                 value={fileName}
-                onChange={(e) => setFileName(e.target.value)}
-                disabled={isEditing}
+                onChange={(e) => {
+                  setFileName(e.target.value);
+                  setError(null); // Clear error when user types
+                }}
+                placeholder="e.g., Survey_2024.xlsx"
               />
+              {isEditing && (
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                  Changing the file name will affect how this ground truth is matched with extraction results
+                </p>
+              )}
             </div>
             
             <div className="form-group">

@@ -162,6 +162,10 @@ async def update_ground_truth(
         raise HTTPException(status_code=404, detail="Ground truth not found")
     
     # Update fields if provided
+    if data.file_name is not None:
+        ground_truth.file_name = data.file_name
+        ground_truth.file_name_normalized = _normalize_filename(data.file_name)
+    
     if data.created_by is not None:
         ground_truth.created_by = data.created_by
     

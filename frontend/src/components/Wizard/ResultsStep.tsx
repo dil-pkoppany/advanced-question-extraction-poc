@@ -433,7 +433,7 @@ function getFullQuestionText(question: { question_text: string; help_text?: stri
   return question.question_text;
 }
 
-/** Calculate text similarity ratio (0.0 to 1.0) using longest common subsequence */
+/** Calculate text similarity ratio (0.0 to 1.0) using multiple algorithms */
 function textSimilarity(text1: string, text2: string): number {
   const normalized1 = normalizeText(text1);
   const normalized2 = normalizeText(text2);
@@ -441,29 +441,47 @@ function textSimilarity(text1: string, text2: string): number {
   if (normalized1 === normalized2) return 1.0;
   if (normalized1.length === 0 || normalized2.length === 0) return 0.0;
   
-  // Use longest common subsequence ratio (similar to Python's SequenceMatcher)
-  const lcs = longestCommonSubsequence(normalized1, normalized2);
-  const maxLen = Math.max(normalized1.length, normalized2.length);
-  return lcs / maxLen;
+  // Use Dice coefficient (bigram-based) which works better for questions with
+  // separated help_text or minor variations
+  const similarity = diceCoefficient(normalized1, normalized2);
+  
+  // Also calculate word-level similarity for better matching
+  const words1 = normalized1.split(' ').filter(w => w.length > 0);
+  const words2 = normalized2.split(' ').filter(w => w.length > 0);
+  const commonWords = words1.filter(w => words2.includes(w)).length;
+  const wordSimilarity = commonWords / Math.max(words1.length, words2.length);
+  
+  // Combine character-level and word-level similarity (weighted average)
+  return similarity * 0.6 + wordSimilarity * 0.4;
 }
 
-/** Calculate longest common subsequence length */
-function longestCommonSubsequence(str1: string, str2: string): number {
-  const m = str1.length;
-  const n = str2.length;
-  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+/** Calculate Dice coefficient similarity using bigrams */
+function diceCoefficient(str1: string, str2: string): number {
+  // Get bigrams (pairs of consecutive characters)
+  const getBigrams = (str: string): Set<string> => {
+    const bigrams = new Set<string>();
+    for (let i = 0; i < str.length - 1; i++) {
+      bigrams.add(str.substring(i, i + 2));
+    }
+    return bigrams;
+  };
   
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (str1[i - 1] === str2[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
+  const bigrams1 = getBigrams(str1);
+  const bigrams2 = getBigrams(str2);
+  
+  if (bigrams1.size === 0 && bigrams2.size === 0) return 1.0;
+  if (bigrams1.size === 0 || bigrams2.size === 0) return 0.0;
+  
+  // Count intersections
+  let intersection = 0;
+  for (const bigram of bigrams1) {
+    if (bigrams2.has(bigram)) {
+      intersection++;
     }
   }
   
-  return dp[m][n];
+  // Dice coefficient = 2 * |intersection| / (|set1| + |set2|)
+  return (2.0 * intersection) / (bigrams1.size + bigrams2.size);
 }
 
 /** Calculate answer similarity using Jaccard index (intersection / union) */
@@ -673,10 +691,42 @@ const ComparisonRow = memo(function ComparisonRow({
                   ? gtQuestion.question_text.substring(0, 200) + '...'
                   : gtQuestion.question_text}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexWrap: 'wrap' }}>
                 <span className="question-type" style={{ fontSize: '0.6875rem' }}>
                   {gtQuestion.question_type}
                 </span>
+                {/* Sheet name badge for ground truth */}
+                {gtQuestion.sheet_name && (
+                  <span 
+                    style={{ 
+                      fontSize: '0.625rem', 
+                      background: '#10b981', 
+                      color: 'white', 
+                      padding: '0.125rem 0.375rem', 
+                      borderRadius: '3px', 
+                      fontWeight: '600' 
+                    }}
+                    title={`Sheet: ${gtQuestion.sheet_name}`}
+                  >
+                    {gtQuestion.sheet_name.length > 15 ? gtQuestion.sheet_name.substring(0, 15) + '...' : gtQuestion.sheet_name}
+                  </span>
+                )}
+                {/* Excel row number badge for ground truth */}
+                {gtQuestion.row_index !== undefined && gtQuestion.row_index !== null && (
+                  <span 
+                    style={{ 
+                      fontSize: '0.625rem', 
+                      background: '#6366f1', 
+                      color: 'white', 
+                      padding: '0.125rem 0.375rem', 
+                      borderRadius: '3px', 
+                      fontWeight: '600' 
+                    }}
+                    title={`Excel row ${gtQuestion.row_index}`}
+                  >
+                    ROW {gtQuestion.row_index}
+                  </span>
+                )}
                 {row.gtDuplicateRows.length > 0 && (
                   <span 
                     style={{ 
@@ -746,6 +796,38 @@ const ComparisonRow = memo(function ComparisonRow({
                   <span className="question-type" style={{ fontSize: '0.6875rem' }}>
                     {question.question_type}
                   </span>
+                  {/* Sheet name badge */}
+                  {question.sheet_name && (
+                    <span 
+                      style={{ 
+                        fontSize: '0.625rem', 
+                        background: '#10b981', 
+                        color: 'white', 
+                        padding: '0.125rem 0.375rem', 
+                        borderRadius: '3px', 
+                        fontWeight: '600' 
+                      }}
+                      title={`Sheet: ${question.sheet_name}`}
+                    >
+                      {question.sheet_name.length > 15 ? question.sheet_name.substring(0, 15) + '...' : question.sheet_name}
+                    </span>
+                  )}
+                  {/* Excel row number badge */}
+                  {question.row_index !== undefined && question.row_index !== null && (
+                    <span 
+                      style={{ 
+                        fontSize: '0.625rem', 
+                        background: '#6366f1', 
+                        color: 'white', 
+                        padding: '0.125rem 0.375rem', 
+                        borderRadius: '3px', 
+                        fontWeight: '600' 
+                      }}
+                      title={`Excel row ${question.row_index}`}
+                    >
+                      ROW {question.row_index}
+                    </span>
+                  )}
                   {matchInfo?.isFuzzy && (
                     <span style={{ fontSize: '0.625rem', background: 'rgba(72, 187, 120, 0.9)', color: 'white', padding: '0.125rem 0.375rem', borderRadius: '3px', fontWeight: '600' }}>
                       FUZZY
@@ -907,20 +989,23 @@ function calculateDetailedMetrics(
   let answerMatches = 0;
   let answerComparisons = 0;
 
-  const FUZZY_THRESHOLD = 0.6;
+  // Use same threshold as comparison view for consistency
+  const FUZZY_THRESHOLD = 0.55;
   const matchedGtIndices = new Set<number>();
   const matchedApproachIndices = new Set<number>();
 
-  // First pass: exact matches
+  // First pass: exact matches (use full text including help_text)
   for (let gtIdx = 0; gtIdx < gtQuestions.length; gtIdx++) {
     const gtQ = gtQuestions[gtIdx];
-    const gtNormalized = normalizeText(gtQ.question_text);
+    const gtFullText = getFullQuestionText(gtQ);
+    const gtNormalized = normalizeText(gtFullText);
     
     for (let appIdx = 0; appIdx < approachQuestions.length; appIdx++) {
       if (matchedApproachIndices.has(appIdx)) continue;
       
       const approachQ = approachQuestions[appIdx];
-      const approachNormalized = normalizeText(approachQ.question_text);
+      const approachFullText = getFullQuestionText(approachQ);
+      const approachNormalized = normalizeText(approachFullText);
       
       if (gtNormalized === approachNormalized) {
         textMatches++;
@@ -948,11 +1033,12 @@ function calculateDetailedMetrics(
     }
   }
 
-  // Second pass: fuzzy matches
+  // Second pass: fuzzy matches (use full text including help_text)
   for (let gtIdx = 0; gtIdx < gtQuestions.length; gtIdx++) {
     if (matchedGtIndices.has(gtIdx)) continue;
     
     const gtQ = gtQuestions[gtIdx];
+    const gtFullText = getFullQuestionText(gtQ);
     let bestSimilarity = 0;
     let bestAppIdx = -1;
     
@@ -960,7 +1046,8 @@ function calculateDetailedMetrics(
       if (matchedApproachIndices.has(appIdx)) continue;
       
       const approachQ = approachQuestions[appIdx];
-      const similarity = textSimilarity(gtQ.question_text, approachQ.question_text);
+      const approachFullText = getFullQuestionText(approachQ);
+      const similarity = textSimilarity(gtFullText, approachFullText);
       
       if (similarity >= FUZZY_THRESHOLD && similarity > bestSimilarity) {
         bestSimilarity = similarity;
@@ -1068,8 +1155,9 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
     // Track GT duplicates: normalized text -> list of row indices (0-based)
     const gtTextToRowIndices = new Map<string, number[]>();
     
-    // Fuzzy matching threshold (same as backend: 0.8)
-    const FUZZY_THRESHOLD = 0.6;
+    // Fuzzy matching threshold - lowered to catch more valid matches
+    // Questions with help_text separated may have lower similarity scores
+    const FUZZY_THRESHOLD = 0.55;
     
     // If we have ground truth, create one row per GT question (no deduplication!)
     if (groundTruth) {
@@ -1214,6 +1302,7 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
     }
     
     // Add any unmatched approach questions (extras not in ground truth)
+    // First pass: try to match extras against GT rows that don't have this approach yet
     for (const key of approachKeys) {
       const result = results[key];
       if (!result.success) continue;
@@ -1222,7 +1311,82 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
         if (matchedApproachQuestions[key].has(i)) continue;
         
         const extraQuestion = result.questions[i];
-        const extraNormalized = normalizeText(extraQuestion.question_text);
+        const extraFullText = getFullQuestionText(extraQuestion);
+        const extraNormalized = normalizeText(extraFullText);
+        
+        // Try to match this extra against GT rows that don't have this approach yet
+        let bestGtRowMatch = -1;
+        let bestGtSimilarity = 0;
+        
+        if (groundTruth) {
+          for (let r = 0; r < rows.length; r++) {
+            if (!rows[r].inGroundTruth) continue; // Only check GT rows
+            if (rows[r].questions[key] !== null) continue; // Skip if already has this approach
+            
+            const gtQ = rows[r].questions['ground_truth'];
+            if (!gtQ) continue;
+            
+            const gtFullText = getFullQuestionText(gtQ);
+            const gtNormalized = normalizeText(gtFullText);
+            
+            // Try exact match first
+            if (extraNormalized === gtNormalized) {
+              bestGtRowMatch = r;
+              bestGtSimilarity = 1.0;
+              break;
+            }
+            
+            // Try fuzzy match
+            const similarity = textSimilarity(extraFullText, gtFullText);
+            if (similarity >= FUZZY_THRESHOLD && similarity > bestGtSimilarity) {
+              // Also check answer similarity for better matching
+              const answerSim = answerSimilarity(gtQ.answers, extraQuestion.answers);
+              const hasAnswers = (gtQ.answers?.length || 0) > 0;
+              const combinedScore = hasAnswers 
+                ? similarity * 0.5 + answerSim * 0.5 
+                : similarity;
+              
+              if (combinedScore >= FUZZY_THRESHOLD) {
+                bestGtSimilarity = similarity;
+                bestGtRowMatch = r;
+              }
+            }
+          }
+        }
+        
+        // If we found a GT row match, add to that row
+        if (bestGtRowMatch >= 0) {
+          rows[bestGtRowMatch].questions[key] = extraQuestion;
+          rows[bestGtRowMatch].matchInfo[key] = { 
+            isFuzzy: bestGtSimilarity < 1.0, 
+            similarity: bestGtSimilarity 
+          };
+          matchedApproachQuestions[key].add(i);
+          
+          // Update row metadata
+          const presentIn = allColumnKeys.filter(k => rows[bestGtRowMatch].questions[k]);
+          rows[bestGtRowMatch].isUnique = presentIn.length === 1;
+          
+          // Check for type differences
+          const matchedQuestions = Object.values(rows[bestGtRowMatch].questions).filter(Boolean);
+          const types = new Set(matchedQuestions.map(q => q!.question_type));
+          rows[bestGtRowMatch].hasDifferences = types.size > 1;
+        }
+      }
+    }
+    
+    // Second pass: handle truly unmatched extras
+    for (const key of approachKeys) {
+      const result = results[key];
+      if (!result.success) continue;
+      
+      for (let i = 0; i < result.questions.length; i++) {
+        if (matchedApproachQuestions[key].has(i)) continue;
+        
+        const extraQuestion = result.questions[i];
+        // Use full text (including help_text) for consistent comparison
+        const extraFullText = getFullQuestionText(extraQuestion);
+        const extraNormalized = normalizeText(extraFullText);
         
         // Check if this extra question already exists in rows (from another approach's extras)
         let existingRowIndex = -1;
@@ -1231,9 +1395,12 @@ function ComparisonView({ results, approachKeys, groundTruth }: ComparisonViewPr
           // Check if any approach in this row has the same normalized text
           for (const approachKey of approachKeys) {
             const q = rows[r].questions[approachKey];
-            if (q && normalizeText(q.question_text) === extraNormalized) {
-              existingRowIndex = r;
-              break;
+            if (q) {
+              const qFullText = getFullQuestionText(q);
+              if (normalizeText(qFullText) === extraNormalized) {
+                existingRowIndex = r;
+                break;
+              }
             }
           }
           if (existingRowIndex >= 0) break;

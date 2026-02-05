@@ -45,6 +45,53 @@ interface GroundTruthPageProps {
 - `viewMode`: `'list' | 'create' | 'edit'`
 - `editingId`: ID of ground truth being edited
 - `fileMetadata`: Excel metadata for new entries
+- `duplicateModalOpen`: Controls duplicate modal visibility
+- `duplicatingId`: ID of ground truth being duplicated
+
+**Actions:**
+| Action | Description |
+|--------|-------------|
+| Create New | Start creating a new ground truth from scratch |
+| Edit | Modify an existing ground truth (including file name) |
+| **Duplicate** | Create a copy with a different name (all questions preserved) |
+| Delete | Remove a ground truth permanently |
+
+**File Name Collision Detection:**
+- When creating or editing, the system validates that the file name is unique
+- Case-insensitive comparison (e.g., "Survey.xlsx" = "survey.xlsx")
+- When editing, the current ground truth's name is excluded from the collision check
+- Clear error messages guide users to choose a different name if collision detected
+
+---
+
+### DuplicateModal (`GroundTruthPage.tsx`)
+
+Modal dialog for duplicating ground truths with name validation.
+
+**Features:**
+- Shows source ground truth name and question count
+- Validates new name is:
+  - Not empty
+  - Different from source name (case-insensitive)
+  - Not already used by another ground truth (case-insensitive)
+- Auto-appends duplication note to new ground truth
+- Supports keyboard shortcuts (Enter to confirm, ESC handled by overlay click)
+
+**Props:**
+```typescript
+interface DuplicateModalProps {
+  sourceGroundTruth: GroundTruth;
+  existingFileNames: string[];  // Lowercase normalized names
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+```
+
+**Validation Rules:**
+- New name required (no empty strings)
+- New name ≠ source name (case-insensitive comparison)
+- New name must not exist in `existingFileNames` array
+- Real-time validation feedback with error messages
 
 ---
 
@@ -68,12 +115,12 @@ Form for creating and editing ground truths.
 
 **Form Sections:**
 
-1. **File Upload/Entry**
+1. **File Upload/Entry** (create mode only)
    - Drag-and-drop Excel upload
    - OR manual filename entry
 
 2. **File Information**
-   - File name (from upload or manual)
+   - **File name** (always editable with collision detection)
    - Created by (required)
    - Notes (optional)
 
@@ -81,6 +128,12 @@ Form for creating and editing ground truths.
    - Tab per sheet
    - Editable sheet names
    - Question list with inline forms
+
+**File Name Editing:**
+- File names can be edited both when creating and editing ground truths
+- Real-time validation prevents name collisions with other ground truths (case-insensitive)
+- Changing the file name affects how the ground truth matches with extraction results
+- The system shows a helpful hint when editing: "(editable)" label and warning about matching impact
 
 ---
 
@@ -124,13 +177,50 @@ sequenceDiagram
     Backend-->>API: GroundTruth data
     API-->>Page: Populate editor
 
-    User->>Page: Make changes
+    User->>Page: Make changes (including file name)
     User->>Page: Click Save
+    Page->>Page: Validate name uniqueness
 
     Page->>API: PUT /api/ground-truth/{id}
+    Note over API: Updates file_name,<br/>file_name_normalized,<br/>and increments version
     API->>Backend: Update JSON file
     Backend-->>API: Updated GroundTruth
     API-->>Page: Success
+```
+
+**Editable Fields:**
+- File name (with collision detection)
+- Created by
+- Notes
+- All sheets and questions
+- Version is auto-incremented on save
+
+### Duplicating Ground Truth
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Page
+    participant Modal
+    participant API
+    participant Backend
+
+    User->>Page: Click Duplicate
+    Page->>API: GET /api/ground-truth/{id}
+    API->>Backend: Load JSON file
+    Backend-->>API: GroundTruth data
+    API-->>Modal: Show modal with source data
+
+    User->>Modal: Enter new file name
+    Modal->>Modal: Validate name uniqueness
+    User->>Modal: Click Duplicate
+
+    Modal->>API: POST /api/ground-truth/
+    Note over API: New GT with same questions,<br/>different file name
+    API->>Backend: Save new JSON file
+    Backend-->>API: New GroundTruth object
+    API-->>Modal: Success
+    Modal->>Page: Refresh list
 ```
 
 ---
@@ -236,8 +326,10 @@ Example filename: `gt_20260128_123456_a1b2c3d4.json`
 
 ## Usage Workflow
 
+### Creating From Scratch
+
 1. **Navigate** to Ground Truth page via nav bar
-2. **Create New** or **Edit** existing
+2. **Click "Create New"**
 3. **Upload Excel** to auto-populate sheet names (or enter manually)
 4. **Add Questions** per sheet with:
    - Question ID (auto-suggested)
@@ -247,6 +339,26 @@ Example filename: `gt_20260128_123456_a1b2c3d4.json`
    - Row index (optional)
 5. **Save** the ground truth
 6. Later, **compare** extraction results against ground truth
+
+### Duplicating Existing Ground Truth
+
+1. **Navigate** to Ground Truth page via nav bar
+2. **Click "Duplicate"** on an existing ground truth
+3. **Enter a new distinct file name** in the modal
+   - Name must be different from all existing ground truths (case-insensitive)
+   - Validation prevents name collisions
+4. **Click "Duplicate"** to create the copy
+   - All questions, sheets, and structure are preserved
+   - Notes field is updated to indicate the source
+   - New ground truth ID is generated
+5. **Edit** the duplicated ground truth to customize questions as needed
+6. Use for variations of the same survey or A/B testing
+
+**Use Cases for Duplication:**
+- Create variations of the same survey for different regions
+- Test different question phrasings while keeping structure
+- Version ground truths before making significant changes
+- Create test data sets based on production ground truths
 
 ---
 

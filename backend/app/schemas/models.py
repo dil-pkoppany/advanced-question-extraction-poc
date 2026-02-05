@@ -403,6 +403,7 @@ class GroundTruthCreate(BaseModel):
 class GroundTruthUpdate(BaseModel):
     """Request to update an existing ground truth."""
 
+    file_name: str | None = Field(None, description="Update file name")
     created_by: str | None = Field(None, description="Update creator")
     notes: str | None = Field(None, description="Update notes")
     sheets: list[GroundTruthSheet] | None = Field(
