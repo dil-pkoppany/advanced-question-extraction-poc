@@ -6,6 +6,49 @@ A POC for comparing different LLM-based approaches to extract questions from Exc
 
 Evaluate and compare four distinct methods for extracting structured question data from Excel files, measuring accuracy, speed, and quality to determine the optimal approach for production use.
 
+## Quick Start
+
+### Fullstack Setup
+```bash
+./start.sh
+```
+
+### Backend Setup
+
+```bash
+cd backend
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+aws sso login
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure AWS (for Bedrock)
+export AWS_PROFILE=your-profile
+export AWS_REGION=us-west-2
+
+# Run server
+uvicorn app.main:app --reload --port 8000
+```
+
+### Frontend Setup
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Run dev server
+npm run dev
+```
+
+Open http://localhost:5173
+
 ## System Architecture
 
 ```mermaid
