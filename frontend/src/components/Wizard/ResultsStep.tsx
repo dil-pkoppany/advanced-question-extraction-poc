@@ -521,6 +521,11 @@ interface ComparisonRowData {
   gtDuplicateRows: number[];
 }
 
+// Helper to show character codes for debugging invisible characters
+function showCharCodes(str: string): string {
+  return [...str].map(c => `${c}(${c.charCodeAt(0)})`).join('');
+}
+
 // Helper to determine cell color for an approach
 function getCellStyle(
   row: ComparisonRowData,
@@ -548,10 +553,66 @@ function getCellStyle(
   }
   
   const typeMatch = question.question_type === gtQuestion.question_type;
-  const gtAnswers = new Set((gtQuestion.answers || []).map(a => a.toLowerCase().trim()));
-  const approachAnswers = new Set((question.answers || []).map(a => a.toLowerCase().trim()));
+  const gtAnswersRaw = gtQuestion.answers || [];
+  const approachAnswersRaw = question.answers || [];
+  const gtAnswers = new Set(gtAnswersRaw.map(a => a.toLowerCase().trim()));
+  const approachAnswers = new Set(approachAnswersRaw.map(a => a.toLowerCase().trim()));
   const answerMatch = gtAnswers.size === 0 || 
     (gtAnswers.size === approachAnswers.size && [...gtAnswers].every(a => approachAnswers.has(a)));
+  
+  // DEBUG: Log comparison details for non-matching rows
+  if (!typeMatch || !answerMatch) {
+    const questionPreview = gtQuestion.question_text.substring(0, 50);
+    console.group(`🔍 Comparison Debug: "${questionPreview}..." [${approachKey}]`);
+    
+    // Type comparison
+    console.log(`Type Match: ${typeMatch}`);
+    console.log(`  GT Type: "${gtQuestion.question_type}"`);
+    console.log(`  Approach Type: "${question.question_type}"`);
+    
+    // Answer comparison
+    console.log(`Answer Match: ${answerMatch}`);
+    console.log(`  GT Answer Count: ${gtAnswers.size}`);
+    console.log(`  Approach Answer Count: ${approachAnswers.size}`);
+    
+    if (!answerMatch && gtAnswers.size > 0) {
+      console.log(`\n📋 GT Answers (raw):`);
+      gtAnswersRaw.forEach((a, i) => {
+        console.log(`  [${i}] "${a}"`);
+        console.log(`      Length: ${a.length}, Normalized: "${a.toLowerCase().trim()}"`);
+      });
+      
+      console.log(`\n📋 Approach Answers (raw):`);
+      approachAnswersRaw.forEach((a, i) => {
+        console.log(`  [${i}] "${a}"`);
+        console.log(`      Length: ${a.length}, Normalized: "${a.toLowerCase().trim()}"`);
+      });
+      
+      // Find which answers don't match
+      const gtAnswersArray = [...gtAnswers];
+      const approachAnswersArray = [...approachAnswers];
+      
+      console.log(`\n❌ Answers in GT but NOT in Approach:`);
+      gtAnswersArray.filter(a => !approachAnswers.has(a)).forEach(a => {
+        console.log(`  "${a}"`);
+        // Show first 100 char codes for debugging
+        if (a.length <= 100) {
+          console.log(`  Char codes: ${showCharCodes(a)}`);
+        }
+      });
+      
+      console.log(`\n❌ Answers in Approach but NOT in GT:`);
+      approachAnswersArray.filter(a => !gtAnswers.has(a)).forEach(a => {
+        console.log(`  "${a}"`);
+        // Show first 100 char codes for debugging
+        if (a.length <= 100) {
+          console.log(`  Char codes: ${showCharCodes(a)}`);
+        }
+      });
+    }
+    
+    console.groupEnd();
+  }
   
   if (isFuzzyMatch) {
     if (typeMatch && answerMatch) {

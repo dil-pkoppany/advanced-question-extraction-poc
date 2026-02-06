@@ -39,6 +39,9 @@ MAX_INPUT_CHARS = SONNET_MAX_INPUT_TOKENS * CHARS_PER_TOKEN  # 720K chars
 MAX_SAMPLE_COLS = 10
 MAX_SAMPLE_ROWS = 30
 
+# Step 3 extraction limits (for filtered markdown)
+MAX_ROWS_PER_BATCH = 100  # Maximum rows per LLM batch to control token usage
+
 logger = logging.getLogger(__name__)
 
 
@@ -458,7 +461,7 @@ Return ONLY the XML."""
         """Step 3: Extract questions with types, answers, dependencies."""
         import re
         
-        # Extract data with context (question cell + adjacent cells)
+        # Extract filtered markdown for each sheet
         batches = self._extract_with_context(structure, file_path)
         
         all_xml_parts = []
@@ -467,9 +470,10 @@ Return ONLY the XML."""
         for batch in batches:
             batch_num += 1
             
-            # Get the actual sheet name from the batch (all items in batch are from same sheet)
-            actual_sheet_name = batch[0].get("sheet", "Sheet1") if batch else "Sheet1"
+            # Get the actual sheet name from the batch dict
+            actual_sheet_name = batch.get("sheet_name", "Sheet1")
             
+            # Build prompt with filtered markdown
             prompt = self._build_extraction_prompt(batch)
             
             # Save prompt
@@ -512,221 +516,289 @@ Return ONLY the XML."""
         
         return combined_xml
 
-    def _extract_with_context(self, structure: dict, file_path: str) -> list[list[dict]]:
-        """Extract question cells with adjacent cell context.
+    def _extract_with_context(self, structure: dict, file_path: str) -> list[dict]:
+        """Extract filtered markdown data for each sheet.
         
-        Uses sheet-based batching: one batch per sheet.
-        This keeps all questions from a sheet together, ensuring:
-        - Follow-up questions stay with their parent questions
-        - Multi-row answer options are not split across batches
-        - Dependencies can use simple row numbers (within same sheet)
+        Uses sheet-based batching with row limits: generates filtered markdown per sheet,
+        splitting large sheets into multiple batches.
+        
+        The markdown table preserves visual structure, making it easier for the LLM to:
+        - See multi-row answer options as table rows
+        - Understand column relationships from headers
+        - Identify question types from patterns
+        
+        Returns list of dicts with {sheet_name, markdown, header_row, data_start_row, columns, batch_num}
         """
         import openpyxl
         
         batches = []
         
+        # Get row counts for each sheet to determine batching
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        sheet_row_counts = {}
+        for sheet_name in wb.sheetnames:
+            sheet_row_counts[sheet_name] = wb[sheet_name].max_row
+        wb.close()
         
-        try:
-            for sheet_info in structure.get("sheets", []):
-                sheet_name = sheet_info["sheet_name"]
-                if sheet_name not in wb.sheetnames:
-                    continue
-                
-                ws = wb[sheet_name]
-                columns = sheet_info.get("columns", {})
-                question_col = columns.get("question_column")
-                answer_col = columns.get("answer_column")
-                answer_options_col = columns.get("answer_options_column")
-                data_start = sheet_info.get("data_start_row", 2)
-                
-                if not question_col:
-                    continue
-                
-                # Find column indices
-                header_row = list(ws[1])
-                q_col_idx = None
-                a_col_idx = None
-                ao_col_idx = None  # answer options column index
-                
-                for idx, cell in enumerate(header_row):
-                    col_name = str(cell.value) if cell.value else f"Unnamed: {idx}"
-                    if col_name == question_col:
-                        q_col_idx = idx
-                    if answer_col and col_name == answer_col:
-                        a_col_idx = idx
-                    if answer_options_col and col_name == answer_options_col:
-                        ao_col_idx = idx
-                
-                if q_col_idx is None:
-                    continue
-                
-                # One batch per sheet - keeps all questions from this sheet together
-                sheet_batch = []
-                
-                # Extract rows with context, detecting multiple-choice question patterns
-                row_idx = data_start
-                while row_idx <= ws.max_row:
-                    row = list(ws[row_idx])
-                    
-                    # Get question cell
-                    q_cell = row[q_col_idx] if q_col_idx < len(row) else None
-                    question_text = str(q_cell.value).strip() if q_cell and q_cell.value else ""
-                    
-                    # Determine which column to check for answer option text in continuation rows
-                    # Prefer answer_options_column over answer_column
-                    continuation_col_idx = ao_col_idx if ao_col_idx is not None else a_col_idx
-                    
-                    # Check if this row has a question or if it's a continuation (empty question cell but has answer option)
-                    if not question_text or question_text == "-":
-                        # Check if answer options column has a value - might be continuation of previous question
-                        if continuation_col_idx is not None and continuation_col_idx < len(row):
-                            option_cell = row[continuation_col_idx]
-                            if option_cell and option_cell.value:
-                                option_text = str(option_cell.value).strip()
-                                # Don't treat TRUE/FALSE as answer options
-                                if option_text.upper() not in ("TRUE", "FALSE"):
-                                    # This might be a continuation row - check previous row
-                                    if sheet_batch and sheet_batch[-1].get("row") == row_idx - 1:
-                                        # Add this as an additional answer option to previous question
-                                        if "answer_options" not in sheet_batch[-1]:
-                                            sheet_batch[-1]["answer_options"] = []
-                                        if option_text:
-                                            sheet_batch[-1]["answer_options"].append(option_text)
-                                        row_idx += 1
-                                        continue
-                        row_idx += 1
-                        continue
-                    
-                    # Build context for this question row
-                    context = {
-                        "row": row_idx,
-                        "sheet": sheet_name,
-                        "question_cell": question_text,
-                        "answer_options": [],  # For multiple choice questions
-                    }
-                    
-                    # Determine which column to use for answer option TEXT
-                    # Prefer answer_options_column (contains text labels) over answer_column (may contain TRUE/FALSE)
-                    option_text_col_idx = ao_col_idx if ao_col_idx is not None else a_col_idx
-                    
-                    # Answer cell value (from answer_column - may be TRUE/FALSE)
-                    if a_col_idx is not None and a_col_idx < len(row):
-                        answer_cell = row[a_col_idx]
-                        if answer_cell and answer_cell.value:
-                            answer_value = str(answer_cell.value).strip()
-                            context["answer_cell"] = answer_value
-                    
-                    # Answer option TEXT (from answer_options_column if available, else answer_column)
-                    if option_text_col_idx is not None and option_text_col_idx < len(row):
-                        option_cell = row[option_text_col_idx]
-                        if option_cell and option_cell.value:
-                            option_text = str(option_cell.value).strip()
-                            # Don't add TRUE/FALSE as answer options text
-                            if option_text.upper() not in ("TRUE", "FALSE"):
-                                context["answer_options"].append(option_text)
-                    
-                    # Check for multiple-choice pattern: look ahead for continuation rows
-                    # A continuation row has: empty question column but answer/option column has value
-                    # Allow skipping over empty gap rows (up to MAX_GAP_ROWS consecutive empty rows)
-                    MAX_GAP_ROWS = 5  # Allow up to 5 consecutive empty rows between answer options
-                    lookahead_idx = row_idx + 1
-                    consecutive_empty_rows = 0
-                    
-                    while lookahead_idx <= ws.max_row and lookahead_idx <= row_idx + 30:  # Max 30 rows lookahead
-                        lookahead_row = list(ws[lookahead_idx])
-                        
-                        # Check question column
-                        lookahead_q_cell = lookahead_row[q_col_idx] if q_col_idx < len(lookahead_row) else None
-                        lookahead_q_text = str(lookahead_q_cell.value).strip() if lookahead_q_cell and lookahead_q_cell.value else ""
-                        
-                        # Check for answer option TEXT (prefer answer_options_column, fallback to answer_column)
-                        lookahead_option_text = ""
-                        if option_text_col_idx is not None and option_text_col_idx < len(lookahead_row):
-                            lookahead_option_cell = lookahead_row[option_text_col_idx]
-                            if lookahead_option_cell and lookahead_option_cell.value:
-                                text = str(lookahead_option_cell.value).strip()
-                                # Don't treat TRUE/FALSE as answer option text
-                                if text.upper() not in ("TRUE", "FALSE"):
-                                    lookahead_option_text = text
-                        
-                        # Case 1: Question column has content = new question, stop
-                        if lookahead_q_text and lookahead_q_text != "-":
-                            break
-                        
-                        # Case 2: Empty question but has answer option text = continuation row
-                        if lookahead_option_text:
-                            context["answer_options"].append(lookahead_option_text)
-                            consecutive_empty_rows = 0  # Reset gap counter
-                            lookahead_idx += 1
-                        else:
-                            # Case 3: Both empty = gap row, skip but count
-                            consecutive_empty_rows += 1
-                            if consecutive_empty_rows > MAX_GAP_ROWS:
-                                # Too many consecutive empty rows, stop looking
-                                break
-                            lookahead_idx += 1
-                    
-                    sheet_batch.append(context)
-                    row_idx += 1
-                
-                # Add the sheet batch if it has any questions
-                if sheet_batch:
-                    batches.append(sheet_batch)
+        # Build pandas-style column name -> index mapping from file metadata.
+        # Step 1 uses pandas which reads row 1 as the header, producing names like
+        # "02.01 Contact Information" or "Unnamed: 3". But Step 3's markdown generator
+        # uses openpyxl with the actual header_row (e.g., row 4), where column names
+        # may differ ("Question", "Response", etc.). We need to resolve pandas names
+        # to positional indices so the markdown generator can find the right columns.
+        metadata = self.parser.get_file_metadata(file_path)
+        pandas_col_to_index: dict[str, dict[str, int]] = {}  # sheet_name -> {col_name -> index}
+        if metadata:
+            for sheet_meta in metadata:
+                col_map = {}
+                for idx, col_name in enumerate(sheet_meta.columns):
+                    col_map[col_name] = idx
+                pandas_col_to_index[sheet_meta.name] = col_map
         
-        finally:
-            wb.close()
+        for sheet_info in structure.get("sheets", []):
+            sheet_name = sheet_info["sheet_name"]
+            columns_info = sheet_info.get("columns", {})
+            header_row = sheet_info.get("header_row", 1)
+            data_start = sheet_info.get("data_start_row", 2)
+            
+            # Get question column - required
+            question_col = columns_info.get("question_column")
+            if not question_col:
+                logger.warning(f"No question column identified for sheet '{sheet_name}', skipping")
+                continue
+            
+            # Build list of columns to include in filtered markdown
+            # Start with question column, then add other relevant columns
+            columns_to_include = [question_col]
+            
+            # Add answer column if present
+            if columns_info.get("answer_column"):
+                columns_to_include.append(columns_info["answer_column"])
+            
+            # Add answer options column if present (important for checkbox labels)
+            if columns_info.get("answer_options_column"):
+                columns_to_include.append(columns_info["answer_options_column"])
+            
+            # Add other useful columns
+            for col_key in ["type_column", "instruction_column", "additional_answer_column", "followup_column"]:
+                if columns_info.get(col_key):
+                    col_name = columns_info[col_key]
+                    if col_name not in columns_to_include:
+                        columns_to_include.append(col_name)
+            
+            # Resolve column names to positional indices using pandas metadata.
+            # This handles the mismatch where pandas names differ from openpyxl header names.
+            # The LLM may alter column names (e.g., dropping '&' or special chars),
+            # so we use normalized matching as a fallback.
+            col_indices_to_include = []
+            sheet_col_map = pandas_col_to_index.get(sheet_name, {})
+            
+            # Build a normalized lookup for fuzzy matching
+            def _normalize_col_name(name: str) -> str:
+                """Normalize column name for fuzzy matching: lowercase, collapse whitespace, strip special chars."""
+                import re as _re
+                normalized = name.lower().strip()
+                # Remove common special chars the LLM might drop
+                normalized = _re.sub(r'[&@#$%^*()+=\[\]{}<>|\\/:;\'\"~`]', ' ', normalized)
+                # Collapse multiple whitespace to single space
+                normalized = _re.sub(r'\s+', ' ', normalized).strip()
+                return normalized
+            
+            normalized_col_map: dict[str, int] = {}
+            for meta_col_name, meta_idx in sheet_col_map.items():
+                normalized_col_map[_normalize_col_name(meta_col_name)] = meta_idx
+            
+            for col_name in columns_to_include:
+                # Try exact match first
+                if col_name in sheet_col_map:
+                    idx = sheet_col_map[col_name]
+                    if idx not in col_indices_to_include:
+                        col_indices_to_include.append(idx)
+                else:
+                    # Try normalized/fuzzy match (handles LLM dropping '&' etc.)
+                    norm_name = _normalize_col_name(col_name)
+                    if norm_name in normalized_col_map:
+                        idx = normalized_col_map[norm_name]
+                        if idx not in col_indices_to_include:
+                            col_indices_to_include.append(idx)
+                            logger.info(
+                                f"Column '{col_name}' matched via normalized lookup to index {idx} "
+                                f"in sheet '{sheet_name}'"
+                            )
+                    else:
+                        logger.warning(
+                            f"Column '{col_name}' not found in pandas metadata for sheet '{sheet_name}', "
+                            f"will attempt name-based lookup in header row"
+                        )
+            
+            # Get total row count for this sheet
+            total_rows = sheet_row_counts.get(sheet_name, 0)
+            data_rows = total_rows - data_start + 1  # Rows from data_start to end
+            
+            # Calculate number of batches needed
+            num_batches = max(1, (data_rows + MAX_ROWS_PER_BATCH - 1) // MAX_ROWS_PER_BATCH)
+            
+            # Generate batches for this sheet
+            sheet_batch_num = 0
+            current_start = data_start
+            
+            while current_start <= total_rows:
+                sheet_batch_num += 1
+                
+                # Generate filtered markdown for this batch
+                # Pass both column names and resolved indices for robust lookup
+                markdown = self.parser.generate_filtered_markdown(
+                    file_path=file_path,
+                    sheet_name=sheet_name,
+                    columns=columns_to_include,
+                    start_row=current_start,
+                    end_row=None,  # Will be limited by max_rows
+                    max_rows=MAX_ROWS_PER_BATCH,
+                    header_row=header_row,
+                    column_indices=col_indices_to_include if col_indices_to_include else None,
+                )
+                
+                if not markdown:
+                    # No more data rows
+                    break
+                
+                # Extract actual column headers from the markdown table.
+                # The prompt should reference the actual table headers (from the openpyxl
+                # header row), not the pandas names which may differ.
+                resolved_question_col = columns_info.get("question_column", "Question")
+                resolved_answer_col = columns_info.get("answer_column", "")
+                resolved_answer_options_col = columns_info.get("answer_options_column", "")
+                
+                # Parse actual headers from the first line of the markdown table
+                md_lines = markdown.strip().split("\n")
+                if md_lines:
+                    header_line = md_lines[0]
+                    # Parse "| Row | Header1 | Header2 | ..." format
+                    md_headers = [h.strip() for h in header_line.split("|") if h.strip()]
+                    # Skip "Row" column
+                    actual_headers = [h for h in md_headers if h != "Row"]
+                    
+                    if actual_headers:
+                        # Map resolved indices to actual header names.
+                        # columns_to_include[0] is always question_column
+                        if len(actual_headers) >= 1:
+                            resolved_question_col = actual_headers[0]
+                        if len(actual_headers) >= 2:
+                            if columns_info.get("answer_options_column"):
+                                resolved_answer_options_col = actual_headers[1]
+                            else:
+                                resolved_answer_col = actual_headers[1]
+                        if len(actual_headers) >= 3:
+                            # Third column is answer_options if separate, or additional column
+                            if columns_info.get("answer_options_column") and columns_info.get("answer_column"):
+                                resolved_answer_col = actual_headers[2]
+                
+                # Build resolved_columns_info with actual header names
+                resolved_columns_info = {
+                    "question_column": resolved_question_col,
+                    "answer_column": resolved_answer_col,
+                    "answer_options_column": resolved_answer_options_col,
+                }
+                
+                # Create batch info
+                batch = {
+                    "sheet_name": sheet_name,
+                    "markdown": markdown,
+                    "header_row": header_row,
+                    "data_start_row": current_start,
+                    "columns": columns_to_include,
+                    "columns_info": columns_info,
+                    "resolved_columns_info": resolved_columns_info,
+                    "batch_num": sheet_batch_num,
+                    "total_batches": num_batches,
+                }
+                
+                batches.append(batch)
+                
+                # Move to next batch
+                current_start += MAX_ROWS_PER_BATCH
+                
+                # Safety check - don't create too many batches
+                if sheet_batch_num >= 20:  # Max 20 batches per sheet
+                    logger.warning(f"Sheet '{sheet_name}' has too many rows, limiting to {sheet_batch_num} batches")
+                    break
         
-        return batches if batches else [[]]
+        return batches if batches else []
 
-    def _build_extraction_prompt(self, batch: list[dict]) -> str:
-        """Build concise extraction prompt for a batch."""
+    def _build_extraction_prompt(self, batch: dict) -> str:
+        """Build extraction prompt for a batch using filtered markdown table.
+        
+        The batch contains:
+        - sheet_name: Name of the sheet
+        - markdown: Filtered markdown table with relevant columns
+        - columns: List of column names included
+        - columns_info: Original column mapping from Step 1
+        - resolved_columns_info: Column names as they appear in the markdown table headers
+        """
+        sheet_name = batch.get("sheet_name", "Sheet1")
+        markdown = batch.get("markdown", "")
+        
+        # Use resolved column names (actual table headers) when available,
+        # fall back to original columns_info (pandas names) for backwards compatibility
+        resolved = batch.get("resolved_columns_info", {})
+        columns_info = batch.get("columns_info", {})
+        
+        # Get column names for context - prefer resolved names that match the table
+        question_col = resolved.get("question_column") or columns_info.get("question_column", "Question")
+        answer_col = resolved.get("answer_column") or columns_info.get("answer_column", "")
+        answer_options_col = resolved.get("answer_options_column") or columns_info.get("answer_options_column", "")
+        
         prompt_parts = [
-            "Extract questions from these rows. For each:",
+            f"Extract questions from this Excel sheet data (sheet: '{sheet_name}').",
+            "",
+            "The data is provided as a markdown table. Each row has a Row number in the first column.",
+            "",
+            "IMPORTANT - Multi-row questions:",
+            "- Rows with '-' in the question column but content in answer columns are CONTINUATION rows",
+            "- These continuation rows contain additional answer OPTIONS for the previous question",
+            "- Group all continuation rows with their parent question",
+            "",
+            "For each question:",
             "1. Separate question text from instructions/comments",
-            "2. Identify type (open_ended, single_choice, multiple_choice, numeric, integer, decimal, etc.)",
-            "3. Extract ALL answer options if present (especially for single_choice, multiple_choice, yes_no questions)",
+            "2. Identify type (open_ended, single_choice, multiple_choice, numeric, yes_no, etc.)",
+            "3. Extract ALL answer options from the question row AND its continuation rows",
             "4. Parse dependencies:",
             "   - Show: 'appears only if...' → action='show'",
             "   - Skip: 'skip if...', 'hidden when...' → action='skip'",
-            "5. Detect FOLLOW-UP questions - these indicate conditional dependencies:",
-            "   - Text patterns: 'If you can not...', 'If no...', 'If not...', 'Please explain...', 'Please detail...'",
-            "   - When detected, create a dependency to the PREVIOUS question row number",
+            "5. Detect FOLLOW-UP questions (indicate conditional dependencies):",
+            "   - Text patterns: 'If you can not...', 'If no...', 'If not...', 'Please explain...'",
+            "   - When detected, create dependency to PREVIOUS question row number",
             "   - Action is 'show' (follow-up appears when main question answered negatively)",
-            "   - Example: Row 5 'Can you meet this requirement?' → Row 6 'If you can not, please detail here'",
-            "     Row 6 should have: <depends_on question_row=\"5\" answer_value=\"No\" action=\"show\"/>",
-            "",
-            "IMPORTANT: If a question has multiple answer options listed in 'answer_options',",
-            "it is likely a single_choice, multiple_choice or yes_no question. Extract ALL options.",
             "",
             "Question type guidelines:",
             "- yes_no: EXACTLY 2 options that are simple 'Yes'/'No' or 'True'/'False' binary choices",
-            "  Example: 'Do you have operations?' → Yes | No",
-            "  If 'Yes' has instructions like 'Yes (please provide detail)', keep as yes_no but put instruction in help_text",
-            "  Example: 'Yes (please provide detail)' | 'No' → type='yes_no', help_text='If Yes, please provide detail'",
-            "  If there are MORE than 2 distinct options, use single_choice instead",
-            "  Example: 'Has your company been audited?' → 'Yes, virtual audit' | 'Yes, on-site audit' | 'No audit yet' = single_choice",
-            "- single_choice: Multiple options (including expanded Yes/No variants) but only one can be selected",
-            "  If a yes/no question has expanded options like 'Yes, option A' | 'Yes, option B' | 'No', use single_choice",
-            "- multiple_choice: Multiple options and multiple can be selected (checkboxes)",
+            "- single_choice: Multiple options but only one can be selected",
+            "- multiple_choice: Multiple options with checkboxes (multiple can be selected)",
+            "  HINT: If you see TRUE/FALSE values in one column and text labels in another column,",
+            "  the text labels are the answer OPTIONS and TRUE/FALSE indicates selected state",
             "- open_ended: No predefined answer options, free text input",
             "",
-            "Rows:",
         ]
         
-        for idx, row_data in enumerate(batch):
-            prompt_parts.append(f"\nRow {row_data['row']}:")
-            prompt_parts.append(f"  [question] {row_data['question_cell']}")
-            if row_data.get('answer_cell'):
-                prompt_parts.append(f"  [answer_value] {row_data['answer_cell']}")
-            # Show all answer options (text labels for answer choices)
-            answer_options = row_data.get('answer_options', [])
-            if answer_options:
-                if len(answer_options) == 1:
-                    prompt_parts.append(f"  [answer_option_text] {answer_options[0]}")
-                else:
-                    prompt_parts.append(f"  [answer_options_text] {' | '.join(answer_options)}")
-                    prompt_parts.append(f"  [NOTE] This question has {len(answer_options)} answer options - likely single_choice or multiple_choice")
+        # Add column context if available
+        if answer_options_col:
+            prompt_parts.extend([
+                f"Column info: Question text is in '{question_col}', answer option TEXT is in '{answer_options_col}'.",
+                f"The '{answer_options_col}' column contains the human-readable labels for each answer option.",
+                "",
+            ])
+        elif answer_col:
+            prompt_parts.extend([
+                f"Column info: Question text is in '{question_col}', answers are in '{answer_col}'.",
+                "",
+            ])
+        
+        # Add the markdown table
+        prompt_parts.extend([
+            "DATA:",
+            markdown,
+            "",
+        ])
         
         prompt_parts.extend([
             "",
@@ -997,6 +1069,7 @@ Return ONLY the XML."""
                 return {"sheets": [], "confidence": 0.0}
             
             sheets = []
+            sheet_confidences = []
             for sheet_tag in structure_tag.find_all("sheet"):
                 columns_tag = sheet_tag.find("columns")
                 columns = {}
@@ -1014,6 +1087,10 @@ Return ONLY the XML."""
                 structure_notes_tag = sheet_tag.find("structure_notes")
                 structure_notes = structure_notes_tag.get_text(strip=True) if structure_notes_tag else ""
                 
+                # Per-sheet confidence
+                sheet_confidence = float(sheet_tag.get("confidence", 0.0)) if sheet_tag.get("confidence") else 0.0
+                sheet_confidences.append(sheet_confidence)
+                
                 sheets.append({
                     "sheet_name": sheet_tag.get("sheet_name", ""),
                     "header_row": int(sheet_tag.get("header_row", 1)),
@@ -1022,7 +1099,10 @@ Return ONLY the XML."""
                     "structure_notes": structure_notes,
                 })
             
+            # Confidence: prefer root-level attribute, fall back to average of per-sheet confidences
             confidence = float(structure_tag.get("confidence", 0.0)) if structure_tag.get("confidence") else 0.0
+            if confidence == 0.0 and sheet_confidences:
+                confidence = sum(sheet_confidences) / len(sheet_confidences)
             
             return {
                 "sheets": sheets,

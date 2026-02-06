@@ -229,30 +229,45 @@ Respond in XML format:
 **Max Tokens**: 32K (Opus) / 16K (Sonnet)  
 **Temperature**: 0.1  
 **Response Format**: XML  
-**Batching**: One batch per sheet (sheet-based batching)
+**Batching**: Sheet-based with row limits (max 100 rows per batch)
+
+### Input Format: Filtered Markdown Tables
+
+Step 3 receives **filtered markdown tables** containing only the columns identified in Step 1. This format:
+- Preserves visual table structure for easier LLM parsing
+- Shows column headers that hint at question types
+- Makes multi-row answer options clearly visible as table rows
+- Avoids complex cell-by-cell extraction logic
 
 ### Input Parameters
 
 - **structure**: Structure analysis from Step 1
 - **file_path**: Path to Excel file
-- **Context Extraction**: For each question row, extracts:
-  - `[question]` - Question cell content from the question_column identified in Step 1
-  - `[answer_value]` - Value from answer_column (may be TRUE/FALSE for checkboxes)
-  - `[answer_option_text]` - Single answer option text label from answer_options_column
-  - `[answer_options_text]` - Multiple answer options text when question spans multiple rows
+- **Filtered Markdown Generation**: For each sheet, generates markdown with:
+  - Row numbers in the first column
+  - Only columns identified in Step 1 (`question_column`, `answer_column`, `answer_options_column`, etc.)
+  - Actual column headers from Excel (more readable than "Unnamed: N")
+  - Row content limited to 100 rows per batch (MAX_ROWS_PER_BATCH)
 
-> **Design Note**: Step 1 identifies distinct columns for answer values (`answer_column`) and answer option text labels (`answer_options_column`). This separation is important for checkbox-based surveys where the checkbox values (TRUE/FALSE) are in a different column from the checkbox alt-text labels. The number of answer options is the primary signal for determining question type (single_choice vs multiple_choice).
+**Example filtered markdown input:**
+```
+| Row | Question | Company Response | Checkbox Alt texts |
+| --- | --- | --- | --- |
+| 27 | Are you subject to regulation? | TRUE | Yes, we are regulated |
+| 28 | - | FALSE | No, we are not regulated |
+| 29 | Which policies do you have? | TRUE | Environmental policy |
+| 30 | - | TRUE | Health and safety policy |
+| 31 | - | FALSE | Anti-bribery policy |
+```
+
+> **Design Note**: The markdown format shows the table structure clearly. Rows with "-" in the Question column but content in answer columns are continuation rows belonging to the previous question.
 
 ### Multiple-Choice Detection
 
-The extraction logic detects when multiple rows belong to the same question:
-- Prefers `answer_options_column` (text labels) over `answer_column` (values) for option text
-- If question column is empty but answer options column has text → continuation row
-- TRUE/FALSE values are filtered out from answer option text (treated as checkbox values, not labels)
-- **Gap Tolerance**: Skips over up to 5 consecutive empty rows between answer options
-- Looks ahead up to 30 rows to find all answer options
-- Stops when a new question is found (non-empty question column)
-- Collects all answer option text into `answer_options` list
+In the markdown format, multiple-choice questions are visible as:
+- First row has the question text
+- Continuation rows have "-" in question column but answer option text in other columns
+- The LLM can see the visual pattern and group options correctly
 
 ### Follow-up Question Detection
 
@@ -275,13 +290,20 @@ Row 6: "If you can not reach this requirement, please detail here."  → Follow-
        → Dependency: depends_on question_row="5" answer_value="No" action="show"
 ```
 
-### Sheet-based Batching
+### Sheet-based Batching with Row Limits
 
-Questions are grouped by sheet - one batch per sheet. This ensures:
-- All questions from a sheet stay together in the same LLM call
-- Follow-up questions remain with their parent questions
-- Dependencies can use simple row numbers (within the same sheet)
-- No questions or answer options are split across batches
+Questions are grouped by sheet, with large sheets split into multiple batches:
+- **MAX_ROWS_PER_BATCH**: 100 rows per LLM call
+- **Max batches per sheet**: 20 (safety limit)
+- Each batch gets the markdown table header plus rows for that batch
+- Follow-up questions remain with their parent questions (within same batch)
+- Dependencies use simple row numbers (within the same sheet)
+
+**Batching Logic:**
+1. Calculate total rows in sheet
+2. Create batches of up to 100 rows each
+3. Each batch includes: sheet_name, markdown table, column info, batch number
+4. Large sheets may generate multiple batches (e.g., 250-row sheet → 3 batches)
 
 **Dependency Format:**
 - In the LLM prompt and response, dependencies use simple row numbers (e.g., `question_row="5"`)
@@ -297,64 +319,71 @@ Questions are grouped by sheet - one batch per sheet. This ensures:
 ### Prompt Structure
 
 ```
-Extract questions from these rows. For each:
+Extract questions from this Excel sheet data (sheet: 'ESG DDQ').
+
+The data is provided as a markdown table. Each row has a Row number in the first column.
+
+IMPORTANT - Multi-row questions:
+- Rows with '-' in the question column but content in answer columns are CONTINUATION rows
+- These continuation rows contain additional answer OPTIONS for the previous question
+- Group all continuation rows with their parent question
+
+For each question:
 1. Separate question text from instructions/comments
-2. Identify type (open_ended, single_choice, multiple_choice, numeric, integer, decimal, yes_no, etc.)
-3. Extract ALL answer options if present (especially for single_choice, multiple_choice, yes_no questions)
+2. Identify type (open_ended, single_choice, multiple_choice, numeric, yes_no, etc.)
+3. Extract ALL answer options from the question row AND its continuation rows
 4. Parse dependencies:
    - Show: 'appears only if...' → action='show'
    - Skip: 'skip if...', 'hidden when...' → action='skip'
-5. Detect FOLLOW-UP questions - these indicate conditional dependencies:
-   - Text patterns: 'If you can not...', 'If no...', 'If not...', 'Please explain...', 'Please detail...'
-   - When detected, create a dependency to the PREVIOUS question row number
+5. Detect FOLLOW-UP questions (indicate conditional dependencies):
+   - Text patterns: 'If you can not...', 'If no...', 'If not...', 'Please explain...'
+   - When detected, create dependency to PREVIOUS question row number
    - Action is 'show' (follow-up appears when main question answered negatively)
-
-IMPORTANT: If a question has multiple answer options listed in 'answer_options',
-it is likely a single_choice, multiple_choice or yes_no question. Extract ALL options.
 
 Question type guidelines:
 - yes_no: EXACTLY 2 options that are simple 'Yes'/'No' or 'True'/'False' binary choices
-  If 'Yes' has instructions like 'Yes (please provide detail)', extract the conditional instruction
-  Example: 'Yes (please provide detail)' | 'No' → type='yes_no', conditional_inputs={'Yes': 'please provide detail'}
-- single_choice: Multiple options (including expanded Yes/No variants) but only one can be selected
-  Extract conditional instructions from answer options
-- multiple_choice: Multiple options and multiple can be selected (checkboxes)
+- single_choice: Multiple options but only one can be selected
+- multiple_choice: Multiple options with checkboxes (multiple can be selected)
+  HINT: If you see TRUE/FALSE values in one column and text labels in another column,
+  the text labels are the answer OPTIONS and TRUE/FALSE indicates selected state
 - open_ended: No predefined answer options, free text input
 
-Rows:
-Row 15:
-  [question] Does your company have any of the following certifications?
-  [answer_value] TRUE
-  [answer_options_text] Environmental certifications | Labor and human rights certifications | Business ethics certification(s)
-  [NOTE] This question has 3 answer options - likely single_choice or multiple_choice
+Column info: Question text is in 'Unnamed: 4', answer option TEXT is in 'Checkbox Alt texts'.
+The 'Checkbox Alt texts' column contains the human-readable labels for each answer option.
+
+DATA:
+| Row | Unnamed: 4 | Company Response | Checkbox Alt texts |
+| --- | --- | --- | --- |
+| 27 | Are you subject to regulation? | TRUE | Yes, we are regulated |
+| 28 | - | FALSE | No, we are not regulated |
+| 29 | Which policies do you have? | TRUE | Environmental policy |
+| 30 | - | TRUE | Health and safety policy |
+| 31 | - | FALSE | Anti-bribery policy |
 
 Output XML format:
 <questions>
-  <q type="single_choice" row="2" sheet="Sheet1">
-    <text>What is your industry?</text>
-    <help_text>Please select one</help_text>
-    <answers><option>Manufacturing</option><option>Services</option></answers>
-    <conditional_inputs><input answer="Yes">please provide detail</input></conditional_inputs>
-    <dependencies><depends_on question_row="5" answer_value="Yes" action="show"/></dependencies>
-  </q>
-  <q type="yes_no" row="8" sheet="Sheet1">
-    <text>Do you have sustainability certifications?</text>
-    <help_text></help_text>
-    <answers><option>Yes</option><option>No</option></answers>
-    <conditional_inputs><input answer="Yes">please provide detail about which certifications</input></conditional_inputs>
-    <dependencies></dependencies>
-  </q>
-  <q type="multiple_choice" row="15" sheet="Sheet1">
-    <text>Does your company have any of the following certifications?</text>
+  <q type="yes_no" row="27" sheet="ESG DDQ">
+    <text>Are you subject to regulation?</text>
     <help_text></help_text>
     <answers>
-      <option>Environmental certifications, such as ISO 50001, ISO 14001, EMAS</option>
-      <option>Labor and human rights certifications, such as Fair Wage Network</option>
-      <option>Business ethics certification(s), such as ISO 27001</option>
+      <option>Yes, we are regulated</option>
+      <option>No, we are not regulated</option>
+    </answers>
+    <dependencies></dependencies>
+  </q>
+  <q type="multiple_choice" row="29" sheet="ESG DDQ">
+    <text>Which policies do you have?</text>
+    <help_text></help_text>
+    <answers>
+      <option>Environmental policy</option>
+      <option>Health and safety policy</option>
+      <option>Anti-bribery policy</option>
     </answers>
     <dependencies></dependencies>
   </q>
 </questions>
+
+Return ONLY the XML.
 ```
 
 ### Output Format (XML)
@@ -542,13 +571,24 @@ Using GUIDs instead of `sheet:row` references provides several benefits:
 
 ## Special Features
 
+### Filtered Markdown Tables
+- Step 3 uses filtered markdown tables instead of structured cell extraction
+- Only columns identified in Step 1 are included (reduces token usage)
+- Actual column headers from Excel are preserved (more readable)
+- Table structure makes multi-row patterns visible to the LLM
+- Row numbers are included for dependency references
+
 ### Multiple-Choice Detection
-- Automatically detects when questions span multiple rows
-- Distinguishes between `answer_column` (values like TRUE/FALSE) and `answer_options_column` (text labels)
-- Groups continuation rows (empty question column, but answer options column has text)
-- Filters out TRUE/FALSE values from answer option text
-- Tolerates up to 5 consecutive empty gap rows between answer options
-- Collects all answer option text from grouped rows
+- Multi-row questions are visible in markdown as continuation rows
+- Continuation rows have "-" in question column but content in answer columns
+- LLM groups options by visual pattern in the table
+- TRUE/FALSE values indicate checkbox state, text columns contain option labels
+
+### Row Batching
+- Large sheets are split into batches of 100 rows (MAX_ROWS_PER_BATCH)
+- Maximum 20 batches per sheet (safety limit)
+- Each batch includes full column headers for context
+- Batch results are combined into single XML output
 
 ### Conditional Instructions
 - Extracts instructions like "Yes (please provide detail)"

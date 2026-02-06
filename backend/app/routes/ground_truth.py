@@ -43,13 +43,29 @@ def _get_ground_truth_path(ground_truth_id: str) -> Path:
 
 
 def _load_ground_truth(ground_truth_id: str) -> GroundTruth | None:
-    """Load a ground truth from disk."""
+    """Load a ground truth from disk.
+    
+    Auto-heals file_name_normalized if it doesn't match the expected
+    lowercase normalization of file_name (e.g., after manual JSON edits).
+    """
     file_path = _get_ground_truth_path(ground_truth_id)
     if not file_path.exists():
         return None
     try:
         data = json.loads(file_path.read_text())
-        return GroundTruth(**data)
+        gt = GroundTruth(**data)
+        
+        # Auto-heal: ensure file_name_normalized is consistent with file_name
+        expected_normalized = _normalize_filename(gt.file_name)
+        if gt.file_name_normalized != expected_normalized:
+            logger.info(
+                f"Auto-healing file_name_normalized for {ground_truth_id}: "
+                f"'{gt.file_name_normalized}' -> '{expected_normalized}'"
+            )
+            gt.file_name_normalized = expected_normalized
+            _save_ground_truth(gt)
+        
+        return gt
     except Exception as e:
         logger.error(f"Failed to load ground truth {ground_truth_id}: {e}")
         return None
@@ -222,7 +238,10 @@ async def get_ground_truth_by_filename(filename: str) -> GroundTruth | None:
     ground_truths = _list_all_ground_truths()
     
     for gt in ground_truths:
-        if gt.file_name_normalized == normalized:
+        # Compare both stored normalized name AND runtime-normalized file_name
+        # to handle cases where file_name_normalized was set incorrectly
+        # (e.g., manually edited JSON without lowercasing)
+        if gt.file_name_normalized == normalized or _normalize_filename(gt.file_name) == normalized:
             return gt
     
     return None
@@ -356,7 +375,7 @@ async def compare_with_ground_truth(
     
     ground_truth = None
     for gt in ground_truths:
-        if gt.file_name_normalized == normalized:
+        if gt.file_name_normalized == normalized or _normalize_filename(gt.file_name) == normalized:
             ground_truth = gt
             break
     

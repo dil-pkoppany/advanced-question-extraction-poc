@@ -2,6 +2,7 @@
 
 import csv
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -234,6 +235,324 @@ class ExcelParser:
 
         logger.warning("MarkItDown returned empty result")
         return ""
+
+    def generate_filtered_markdown(
+        self,
+        file_path: str,
+        sheet_name: str,
+        columns: list[str],
+        start_row: int = 1,
+        end_row: int | None = None,
+        max_rows: int = 100,
+        header_row: int = 1,
+        column_indices: list[int] | None = None,
+    ) -> str:
+        """
+        Generate markdown table with only specified columns.
+        
+        Used by Approach 4 to pass filtered data to Step 3.
+        
+        Args:
+            file_path: Path to Excel/CSV file
+            sheet_name: Name of sheet to extract from
+            columns: List of column names to include (e.g., ["Unnamed: 4", "Unnamed: 5"])
+            start_row: Row number to start extraction (1-based, default 1)
+            end_row: Row number to end extraction (1-based, None for all rows)
+            max_rows: Maximum number of rows to include (for token control)
+            header_row: Row number containing headers (1-based, default 1)
+            column_indices: Optional pre-resolved column indices (0-based). When provided,
+                these take priority over name-based column lookup for Excel files.
+                This handles the mismatch between pandas column names (from Step 1)
+                and openpyxl header row column names (used in Step 3).
+            
+        Returns:
+            Markdown table string with filtered columns
+        """
+        if self._is_csv(file_path):
+            return self._generate_filtered_markdown_csv(
+                file_path, sheet_name, columns, start_row, end_row, max_rows
+            )
+        return self._generate_filtered_markdown_excel(
+            file_path, sheet_name, columns, start_row, end_row, max_rows, header_row,
+            column_indices,
+        )
+
+    def _generate_filtered_markdown_csv(
+        self,
+        file_path: str,
+        sheet_name: str,
+        columns: list[str],
+        start_row: int,
+        end_row: int | None,
+        max_rows: int,
+    ) -> str:
+        """Generate filtered markdown from CSV file."""
+        file_name = Path(file_path).stem
+        
+        # CSV files have a single "sheet" named after the file
+        if sheet_name != file_name:
+            logger.warning(f"Sheet '{sheet_name}' not found in CSV (has '{file_name}')")
+            return ""
+        
+        with open(file_path, 'r', encoding='utf-8-sig', newline='') as f:
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+            except csv.Error:
+                dialect = csv.excel
+            
+            reader = csv.reader(f, dialect)
+            rows = list(reader)
+        
+        if not rows:
+            return ""
+        
+        # Build column name mapping (first row is header)
+        all_headers = []
+        for col_idx, value in enumerate(rows[0]):
+            if value and value.strip():
+                all_headers.append(value.strip())
+            else:
+                all_headers.append(f"Unnamed: {col_idx}")
+        
+        # Find indices of requested columns
+        col_indices = []
+        filtered_headers = []
+        for col_name in columns:
+            if col_name in all_headers:
+                idx = all_headers.index(col_name)
+                col_indices.append(idx)
+                filtered_headers.append(col_name)
+            else:
+                # Fallback: handle "Unnamed: N" style columns by positional index
+                unnamed_match = re.match(r"^Unnamed:\s*(\d+)$", col_name)
+                if unnamed_match:
+                    positional_idx = int(unnamed_match.group(1))
+                    if positional_idx < len(all_headers):
+                        col_indices.append(positional_idx)
+                        filtered_headers.append(all_headers[positional_idx])
+                        logger.info(
+                            f"CSV column '{col_name}' resolved by positional index "
+                            f"{positional_idx} -> '{all_headers[positional_idx]}'"
+                        )
+                else:
+                    # Try case-insensitive match
+                    col_name_lower = col_name.lower().strip()
+                    for h_idx, h in enumerate(all_headers):
+                        if h.lower().strip() == col_name_lower:
+                            col_indices.append(h_idx)
+                            filtered_headers.append(all_headers[h_idx])
+                            break
+        
+        if not col_indices:
+            logger.warning(f"No matching columns found in CSV for: {columns}")
+            return ""
+        
+        # Build markdown table
+        lines = []
+        
+        # Header row
+        lines.append("| Row | " + " | ".join(filtered_headers) + " |")
+        lines.append("| --- | " + " | ".join("---" for _ in filtered_headers) + " |")
+        
+        # Data rows
+        data_rows = rows[1:]
+        actual_start = max(0, start_row - 2)  # Convert to 0-based index
+        actual_end = min(len(data_rows), (end_row - 1) if end_row else len(data_rows))
+        
+        rows_added = 0
+        for data_idx in range(actual_start, actual_end):
+            if rows_added >= max_rows:
+                break
+            
+            row = data_rows[data_idx]
+            row_num = data_idx + 2  # 1-based row number (accounting for header)
+            
+            # Extract values for filtered columns
+            values = []
+            for col_idx in col_indices:
+                if col_idx < len(row):
+                    val = row[col_idx]
+                    if val and val.strip():
+                        # Escape pipe characters and clean whitespace
+                        clean_val = val.strip().replace("|", "\\|").replace("\n", " ")
+                        values.append(clean_val)
+                    else:
+                        values.append("-")
+                else:
+                    values.append("-")
+            
+            lines.append(f"| {row_num} | " + " | ".join(values) + " |")
+            rows_added += 1
+        
+        markdown_text = "\n".join(lines)
+        logger.info(f"Generated filtered markdown: {len(filtered_headers)} columns, {rows_added} rows")
+        return markdown_text
+
+    def _generate_filtered_markdown_excel(
+        self,
+        file_path: str,
+        sheet_name: str,
+        columns: list[str],
+        start_row: int,
+        end_row: int | None,
+        max_rows: int,
+        header_row: int,
+        column_indices: list[int] | None = None,
+    ) -> str:
+        """Generate filtered markdown from Excel file."""
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        
+        if sheet_name not in wb.sheetnames:
+            logger.warning(f"Sheet '{sheet_name}' not found in workbook")
+            wb.close()
+            return ""
+        
+        ws = wb[sheet_name]
+        
+        # Get column headers from specified header row
+        all_headers = []
+        header_row_data = list(ws[header_row])
+        for col_idx, cell in enumerate(header_row_data):
+            if cell.value is not None:
+                all_headers.append(str(cell.value))
+            else:
+                all_headers.append(f"Unnamed: {col_idx}")
+        
+        # Resolve column indices.
+        # Priority: use pre-resolved indices from caller (avoids pandas/openpyxl name mismatch),
+        # then fall back to name-based lookup.
+        col_indices: list[int] = []
+        filtered_headers: list[str] = []
+        
+        if column_indices:
+            # Use pre-resolved indices directly (from pandas metadata)
+            seen = set()
+            for idx in column_indices:
+                if idx < len(all_headers) and idx not in seen:
+                    col_indices.append(idx)
+                    filtered_headers.append(all_headers[idx])
+                    seen.add(idx)
+                elif idx >= len(all_headers):
+                    logger.warning(
+                        f"Pre-resolved column index {idx} out of range "
+                        f"(sheet '{sheet_name}' has {len(all_headers)} columns in header row {header_row})"
+                    )
+            if col_indices:
+                logger.info(
+                    f"Using {len(col_indices)} pre-resolved column indices for sheet '{sheet_name}': "
+                    f"{list(zip(col_indices, filtered_headers))}"
+                )
+        
+        # Fall back to name-based lookup if no pre-resolved indices or none matched
+        if not col_indices:
+            for col_name in columns:
+                if col_name in all_headers:
+                    # Direct match found
+                    idx = all_headers.index(col_name)
+                    col_indices.append(idx)
+                    filtered_headers.append(all_headers[idx])
+                else:
+                    # Fallback: handle "Unnamed: N" style columns from pandas
+                    unnamed_match = re.match(r"^Unnamed:\s*(\d+)$", col_name)
+                    if unnamed_match:
+                        positional_idx = int(unnamed_match.group(1))
+                        if positional_idx < len(all_headers):
+                            col_indices.append(positional_idx)
+                            filtered_headers.append(all_headers[positional_idx])
+                            logger.info(
+                                f"Column '{col_name}' not found in header row {header_row} of sheet '{sheet_name}', "
+                                f"using positional index {positional_idx} -> '{all_headers[positional_idx]}'"
+                            )
+                        else:
+                            logger.warning(
+                                f"Column '{col_name}' positional index {positional_idx} out of range "
+                                f"(sheet '{sheet_name}' has {len(all_headers)} columns)"
+                            )
+                    else:
+                        # Try case-insensitive match as a last resort
+                        col_name_lower = col_name.lower().strip()
+                        matched = False
+                        for h_idx, h in enumerate(all_headers):
+                            if h.lower().strip() == col_name_lower:
+                                col_indices.append(h_idx)
+                                filtered_headers.append(all_headers[h_idx])
+                                logger.info(
+                                    f"Column '{col_name}' matched case-insensitively to '{all_headers[h_idx]}' "
+                                    f"in sheet '{sheet_name}'"
+                                )
+                                matched = True
+                                break
+                        if not matched:
+                            logger.warning(
+                                f"Column '{col_name}' not found in sheet '{sheet_name}' "
+                                f"header row {header_row}. Available: {all_headers}"
+                            )
+        
+        if not col_indices:
+            logger.warning(f"No matching columns found in sheet '{sheet_name}' for: {columns}")
+            wb.close()
+            return ""
+        
+        # Build markdown table
+        lines = []
+        
+        # Header row (use actual column names from Excel)
+        display_headers = []
+        for col_idx in col_indices:
+            header_text = all_headers[col_idx]
+            # Escape pipe characters
+            header_text = header_text.replace("|", "\\|").replace("\n", " ")
+            display_headers.append(header_text)
+        
+        lines.append("| Row | " + " | ".join(display_headers) + " |")
+        lines.append("| --- | " + " | ".join("---" for _ in display_headers) + " |")
+        
+        # Data rows
+        actual_start = max(start_row, header_row + 1)  # Start after header
+        actual_end = end_row if end_row else ws.max_row
+        
+        rows_added = 0
+        for row_idx in range(actual_start, actual_end + 1):
+            if rows_added >= max_rows:
+                break
+            
+            row = list(ws[row_idx])
+            
+            # Extract values for filtered columns
+            values = []
+            has_content = False
+            for col_idx in col_indices:
+                if col_idx < len(row):
+                    cell = row[col_idx]
+                    if cell.value is not None:
+                        val = str(cell.value).strip()
+                        if val:
+                            has_content = True
+                            # Escape pipe characters and clean whitespace
+                            clean_val = val.replace("|", "\\|").replace("\n", " ")
+                            # Truncate very long values
+                            if len(clean_val) > 500:
+                                clean_val = clean_val[:500] + "..."
+                            values.append(clean_val)
+                        else:
+                            values.append("-")
+                    else:
+                        values.append("-")
+                else:
+                    values.append("-")
+            
+            # Only include rows that have some content
+            if has_content:
+                lines.append(f"| {row_idx} | " + " | ".join(values) + " |")
+                rows_added += 1
+        
+        wb.close()
+        
+        markdown_text = "\n".join(lines)
+        logger.info(f"Generated filtered markdown for '{sheet_name}': {len(filtered_headers)} columns, {rows_added} rows")
+        return markdown_text
 
     def extract_rows_by_columns(
         self,
