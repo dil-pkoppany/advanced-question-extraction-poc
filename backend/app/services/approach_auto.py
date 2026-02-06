@@ -2,14 +2,16 @@
 
 This approach:
 1. Converts Excel to Markdown using MarkItDown
-2. Sends full content to LLM for question extraction
-3. Parses XML response to extract questions
+2. Splits into per-sheet chunks to avoid output token truncation
+3. Sends each sheet to LLM for question extraction
+4. Combines and parses XML responses to extract questions
 
 No user input required - baseline for comparison.
 """
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -50,9 +52,44 @@ class AutoExtractionService:
             config=config,
         )
 
+    def _split_markdown_by_sheet(self, markdown_text: str) -> list[dict[str, str]]:
+        """Split MarkItDown output into per-sheet chunks.
+
+        MarkItDown produces markdown with ``## SheetName`` headers separating
+        each Excel sheet. This method splits the full markdown into individual
+        sheet sections so each can be processed by the LLM independently,
+        avoiding output token truncation on large multi-sheet files.
+
+        Returns:
+            List of dicts with ``sheet_name`` and ``content`` keys.
+        """
+        # Match sheet headers produced by MarkItDown (## SheetName at line start)
+        sheet_pattern = re.compile(r'^## (.+)$', re.MULTILINE)
+        matches = list(sheet_pattern.finditer(markdown_text))
+
+        if not matches:
+            # No sheet headers found (single sheet or CSV) — return as one chunk
+            return [{"sheet_name": "Sheet1", "content": markdown_text}]
+
+        sheets: list[dict[str, str]] = []
+        for i, match in enumerate(matches):
+            sheet_name = match.group(1).strip()
+            start = match.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown_text)
+            content = markdown_text[start:end].strip()
+
+            if content:
+                sheets.append({"sheet_name": sheet_name, "content": content})
+
+        logger.info(f"Split markdown into {len(sheets)} sheet chunks")
+        return sheets
+
     async def extract(self, file_path: str, run_id: str | None = None) -> ExtractionResult:
         """
         Extract questions automatically using LLM.
+
+        Converts the file to markdown and processes each sheet independently
+        to avoid hitting the LLM output token limit on large multi-sheet files.
 
         Args:
             file_path: Path to the Excel file
@@ -62,9 +99,10 @@ class AutoExtractionService:
             ExtractionResult with questions and metrics
         """
         start_time = time.time()
-        prompt = None  # Track prompt for saving even on failure
-        response = None  # Track response for saving even on failure
         intermediate_dir = None
+        total_llm_calls = 0
+        total_tokens_in = 0
+        total_tokens_out = 0
 
         try:
             # Create intermediate results directory if run_id provided
@@ -83,96 +121,132 @@ class AutoExtractionService:
                     error="Failed to convert Excel to Markdown",
                 )
 
-            # Save markdown content for debugging
+            # Save full markdown content for debugging
             if intermediate_dir:
                 markdown_file = intermediate_dir / "excel_as_markdown.md"
                 markdown_file.write_text(markdown_text)
 
-            # Step 2: Build prompt and call LLM
-            prompt = self._build_prompt(markdown_text)
-            
-            # Save prompt
-            if intermediate_dir:
-                prompt_file = intermediate_dir / "extraction_prompt.txt"
-                prompt_file.write_text(prompt)
+            # Step 2: Split into per-sheet chunks
+            sheet_chunks = self._split_markdown_by_sheet(markdown_text)
+            logger.info(
+                f"Processing {len(sheet_chunks)} sheet(s) individually to avoid output truncation"
+            )
 
+            # Step 3: Process each sheet independently
+            all_questions: list[ExtractedQuestion] = []
             llm_start = time.time()
-            response = await self._invoke_llm(prompt)
+
+            for chunk_idx, chunk in enumerate(sheet_chunks):
+                sheet_name = chunk["sheet_name"]
+                sheet_content = chunk["content"]
+                batch_num = chunk_idx + 1
+
+                logger.info(
+                    f"Processing sheet {batch_num}/{len(sheet_chunks)}: '{sheet_name}' "
+                    f"({len(sheet_content)} chars)"
+                )
+
+                # Build prompt for this sheet
+                prompt = self._build_prompt(sheet_content, sheet_name=sheet_name)
+                total_tokens_in += len(prompt) // 4
+
+                # Save prompt
+                if intermediate_dir:
+                    prompt_file = intermediate_dir / f"approach_1_sheet_{batch_num}_prompt.txt"
+                    prompt_file.write_text(prompt)
+
+                # Call LLM
+                response = await self._invoke_llm(prompt)
+                total_llm_calls += 1
+                total_tokens_out += len(response) // 4
+
+                # Save raw response
+                if intermediate_dir:
+                    response_file = (
+                        intermediate_dir / f"approach_1_sheet_{batch_num}_response.xml"
+                    )
+                    response_file.write_text(response)
+
+                # Parse response and inject sheet_name
+                sheet_questions = self._parse_response(response, sheet_name=sheet_name)
+                logger.info(
+                    f"Sheet '{sheet_name}': extracted {len(sheet_questions)} questions"
+                )
+                all_questions.extend(sheet_questions)
+
             llm_time_ms = int((time.time() - llm_start) * 1000)
 
-            # Save raw response
+            # Save combined parsed questions
             if intermediate_dir:
-                response_file = intermediate_dir / "extraction_response.xml"
-                response_file.write_text(response)
-
-            # Step 3: Parse response
-            questions = self._parse_response(response)
-
-            # Save parsed questions
-            if intermediate_dir:
-                questions_file = intermediate_dir / "parsed_questions.json"
+                questions_file = intermediate_dir / "approach_1_parsed_questions.json"
                 questions_file.write_text(
-                    json.dumps([q.model_dump() for q in questions], indent=2, default=str)
+                    json.dumps(
+                        [q.model_dump() for q in all_questions], indent=2, default=str
+                    )
                 )
 
             total_time_ms = int((time.time() - start_time) * 1000)
 
             # Calculate dependency counts
             show_deps_count = sum(
-                1 for q in questions
-                if q.dependencies and any(d.dependency_action == "show" for d in q.dependencies)
+                1
+                for q in all_questions
+                if q.dependencies
+                and any(d.dependency_action == "show" for d in q.dependencies)
             )
             skip_deps_count = sum(
-                1 for q in questions
-                if q.dependencies and any(d.dependency_action == "skip" for d in q.dependencies)
+                1
+                for q in all_questions
+                if q.dependencies
+                and any(d.dependency_action == "skip" for d in q.dependencies)
             )
 
             return ExtractionResult(
                 approach=1,
                 success=True,
-                questions=questions,
+                questions=all_questions,
                 metrics=ExtractionMetrics(
-                    extraction_count=len(questions),
+                    extraction_count=len(all_questions),
                     llm_time_ms=llm_time_ms,
                     total_time_ms=total_time_ms,
-                    tokens_input=len(prompt) // 4,  # Approximate
-                    tokens_output=len(response) // 4,
+                    total_llm_calls=total_llm_calls,
+                    tokens_input=total_tokens_in,
+                    tokens_output=total_tokens_out,
                     show_dependencies_count=show_deps_count,
                     skip_dependencies_count=skip_deps_count,
                 ),
-                prompt=prompt,
-                raw_response=response,
             )
 
         except Exception as e:
             logger.error(f"Auto extraction failed: {e}", exc_info=True)
-            
+
             # Save error details if we have intermediate_dir
             if intermediate_dir:
                 error_file = intermediate_dir / "error.txt"
                 error_file.write_text(f"Error: {str(e)}")
-                if prompt:
-                    prompt_file = intermediate_dir / "extraction_prompt.txt"
-                    prompt_file.write_text(prompt)
-                if response:
-                    response_file = intermediate_dir / "extraction_response.xml"
-                    response_file.write_text(response)
-            
+
             return ExtractionResult(
                 approach=1,
                 success=False,
                 error=str(e),
-                prompt=prompt,
-                raw_response=response,
                 metrics=ExtractionMetrics(
                     extraction_count=0,
                     total_time_ms=int((time.time() - start_time) * 1000),
                 ),
             )
 
-    def _build_prompt(self, content: str) -> str:
-        """Build the extraction prompt with rich output format."""
-        return f"""Extract ALL questions from this survey content.
+    def _build_prompt(self, content: str, sheet_name: str | None = None) -> str:
+        """Build the extraction prompt with rich output format.
+
+        Args:
+            content: Markdown content to extract questions from.
+            sheet_name: Optional sheet name for per-sheet context.
+        """
+        sheet_context = ""
+        if sheet_name:
+            sheet_context = f" from the sheet '{sheet_name}'"
+
+        return f"""Extract ALL questions{sheet_context} from this survey content.
 
 EXTRACTION RULES
 
@@ -304,16 +378,22 @@ Extract ALL questions. Return ONLY the XML."""
 
         raise Exception("No content in Bedrock response")
 
-    def _parse_response(self, response_text: str) -> list[ExtractedQuestion]:
+    def _parse_response(
+        self, response_text: str, sheet_name: str | None = None
+    ) -> list[ExtractedQuestion]:
         """Parse XML response into questions with GUID generation and dependency resolution.
         
         Uses a two-pass approach like Approach 4:
         1. First pass: Create questions with GUIDs and build seq->GUID mapping
         2. Second pass: Resolve dependency references from seq numbers to GUIDs
+
+        Args:
+            response_text: Raw XML response from the LLM.
+            sheet_name: Optional sheet name to inject into each question.
         """
         import uuid
         
-        questions = []
+        questions: list[ExtractedQuestion] = []
         # Map seq number -> question_id (GUID) for dependency resolution
         seq_to_guid: dict[str, str] = {}
         # Store raw dependency data for second pass
@@ -446,6 +526,7 @@ Extract ALL questions. Return ONLY the XML."""
                         help_text=help_text,
                         conditional_inputs=conditional_inputs,
                         dependencies=None,  # Will be set in second pass
+                        sheet_name=sheet_name,
                     )
                 )
             

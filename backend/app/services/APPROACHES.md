@@ -46,8 +46,18 @@ flowchart TB
 ### Process
 
 1. Convert Excel to Markdown using `markitdown`
-2. Send entire content to LLM with extraction prompt
-3. Parse XML response to extract questions
+2. Split markdown into per-sheet chunks (by `## SheetName` headers)
+3. Send each sheet to LLM independently with extraction prompt
+4. Parse XML responses and combine questions from all sheets
+
+### Per-Sheet Chunking
+
+Large multi-sheet Excel files can produce LLM responses that exceed the output token limit (32K tokens), causing truncation mid-question. To avoid this, Approach 1 splits the MarkItDown output by sheet and processes each sheet as a separate LLM call:
+
+- **Splitting**: MarkItDown uses `## SheetName` as sheet separators — the markdown is split at these headers
+- **Independent calls**: Each sheet gets its own prompt and LLM response, keeping output within token limits
+- **Sheet name injection**: The `sheet_name` is injected into each extracted question for comparison and display
+- **Single-sheet files**: Files with one sheet (or CSVs) are processed in a single call as before
 
 ### When to Use
 
@@ -57,44 +67,47 @@ flowchart TB
 
 ### Prompt Template
 
+Each sheet receives its own prompt:
+
 ```
-Extract ALL questions from this survey content.
+Extract ALL questions from the sheet 'Section 1' from this survey content.
 
 EXTRACTION RULES
 
-ANALYZE THE STRUCTURE: Identify which columns contain main questions, 
-subquestions (grouped follow-up items), and answer options.
+1. ANALYZE THE STRUCTURE: Identify which columns/sections contain questions,
+   answer options, and instructions.
 
-EXTRACT EVERY QUESTION FULLY: Extract each question completely. This 
-includes interrogative sentences, imperative instructions, and any 
-request for information.
+2. EXTRACT EVERY QUESTION FULLY: Extract each question completely. This includes:
+   - Interrogative sentences (e.g., "How satisfied are you...")
+   - Imperative instructions (e.g., "List the main reasons...")
+   - Any request for information
 
-ANSWER OPTIONS AND CHOICE TYPES: If a question includes predefined 
-answer options (including Yes/No), list them after the question in 
-parentheses, separated by "|".
+3. SEPARATE QUESTION TEXT FROM INSTRUCTIONS:
+   - Put the actual question in <text>
+   - Put instructions, comments, or help text in <help_text>
 
-GROUPED QUESTIONS: A grouped question is when a main question is 
-followed by multiple related subquestions. Extract each combination as:
-Main question:Subquestion
+4. EXTRACT ALL ANSWER OPTIONS:
+   - Put each answer option in a separate <option> tag within <answers>
+   - Do NOT embed answers in the question text
 
-CATEGORIES:
-- open_ended: No answer options and no subquestions
-- single_choice: Has answer options, only one can be selected
-- multiple_choice: Has answer options, multiple can be selected
-- grouped_question: Has subquestions
-- yes_no: Can only be answered with Yes or No
+5. DETECT FOLLOW-UP QUESTIONS AND DEPENDENCIES:
+   - Text patterns: "If you can not...", "If no...", "Please explain..."
+   - Create dependency to PREVIOUS question using its seq number
 
 CONTENT:
-{content}
+{sheet_content}
 
 OUTPUT FORMAT:
 <questions>
-  <q type="open_ended">Full question text</q>
-  <q type="single_choice">Question? (Option A|Option B|Option C)</q>
-  <q type="grouped_question">Question: subpart</q>
+  <q type="yes_no" seq="1">
+    <text>Do you have sustainability certifications?</text>
+    <help_text></help_text>
+    <answers><option>Yes</option><option>No</option></answers>
+    <dependencies></dependencies>
+  </q>
 </questions>
 
-Return ONLY the XML.
+Extract ALL questions. Return ONLY the XML.
 ```
 
 ### Output Metrics
@@ -102,10 +115,26 @@ Return ONLY the XML.
 | Metric | Description |
 |--------|-------------|
 | `extraction_count` | Number of questions found |
-| `llm_time_ms` | Time spent in LLM call |
+| `total_llm_calls` | Number of per-sheet LLM calls |
+| `llm_time_ms` | Total time spent in LLM calls |
 | `total_time_ms` | Total processing time |
-| `tokens_input` | Approximate input tokens |
-| `tokens_output` | Approximate output tokens |
+| `tokens_input` | Approximate total input tokens |
+| `tokens_output` | Approximate total output tokens |
+
+### Intermediate Files
+
+Per-sheet prompts and responses are saved for debugging:
+
+```
+intermediate_results/
+├── excel_as_markdown.md                  # Full MarkItDown output
+├── approach_1_sheet_1_prompt.txt         # Prompt for sheet 1
+├── approach_1_sheet_1_response.xml       # Response for sheet 1
+├── approach_1_sheet_2_prompt.txt         # Prompt for sheet 2
+├── approach_1_sheet_2_response.xml       # Response for sheet 2
+├── ...
+└── approach_1_parsed_questions.json      # Combined parsed questions
+```
 
 ---
 
@@ -320,10 +349,11 @@ The `ExcelParser` service handles all Excel file operations.
 
 | Method | Description |
 |--------|-------------|
-| `convert_to_markdown()` | Converts Excel to Markdown for LLM |
+| `convert_to_markdown()` | Converts full Excel to Markdown for LLM (Approach 1) |
+| `generate_filtered_markdown()` | Generates markdown table with selected columns and optional pre-resolved column indices (Approach 4) |
+| `get_file_metadata()` | Returns sheet names, columns (from row 1), row counts, sample data |
 | `count_rows_in_columns()` | Counts non-empty rows in specified columns |
 | `extract_rows_by_columns()` | Extracts row data deterministically |
-| `get_metadata()` | Returns sheet names, columns, sample data |
 
 ### Sheet Processing
 
@@ -343,22 +373,28 @@ flowchart LR
 
 ## Response Parsing
 
-Both Approach 1 and 2 expect XML responses:
+Approaches 1, 2, and 4 expect XML responses with structured question elements:
 
 ```xml
 <questions>
-  <q type="open_ended">What is your name?</q>
-  <q type="single_choice">Gender? (Male|Female|Other)</q>
-  <q type="grouped_question">Rate the following: Service quality</q>
+  <q type="yes_no" seq="1">
+    <text>Do you have sustainability certifications?</text>
+    <help_text></help_text>
+    <answers><option>Yes</option><option>No</option></answers>
+    <conditional_inputs><input answer="Yes">please provide detail</input></conditional_inputs>
+    <dependencies></dependencies>
+  </q>
 </questions>
 ```
 
 **Parsing logic** (`_parse_response`):
 1. Find `<questions>` tags
-2. Handle incomplete XML (recovery)
+2. Handle incomplete XML (recovery — append `</questions>`)
 3. Parse with BeautifulSoup
-4. Extract embedded answers from parentheses
-5. Map type strings to `QuestionType` enum
+4. Extract `<text>`, `<help_text>`, `<answers>/<option>`, `<conditional_inputs>`, `<dependencies>`
+5. Generate UUIDs and build seq/row → GUID mapping for dependency resolution
+6. Map type strings to `QuestionType` enum
+7. Inject `sheet_name` (Approaches 1 and 4)
 
 ---
 
@@ -379,7 +415,7 @@ bedrock_judge_model_id = "global.anthropic.claude-3-haiku-20240307-v1:0"
 
 | Setting | Extraction | Judge |
 |---------|------------|-------|
-| `max_tokens` | 24,576 | 1,024 |
+| `max_tokens` | 32,768 | 1,024 |
 | `temperature` | 0.1 | 0.0 |
 
 ---
@@ -388,12 +424,14 @@ bedrock_judge_model_id = "global.anthropic.claude-3-haiku-20240307-v1:0"
 
 | Aspect | Approach 1 | Approach 2 | Approach 3 | Approach 4 |
 |--------|------------|------------|------------|------------|
-| **LLM for extraction** | Yes | Yes | No | Yes |
+| **LLM for extraction** | Yes (per-sheet) | Yes | No | Yes (per-sheet) |
 | **User input required** | No | Yes | Yes | No |
 | **Accuracy metric** | No | Yes | N/A | No |
 | **Confidence scores** | No | No | Yes | No |
-| **Speed** | Slow | Slow | Fast | Medium |
+| **Speed** | Medium | Slow | Fast | Medium |
 | **Model used** | Opus/Sonnet | Opus/Sonnet | Haiku | Opus/Sonnet |
-| **Dependencies detected** | No | No | No | Yes |
-| **Follow-up detection** | No | No | No | Yes |
+| **Dependencies detected** | Yes | No | No | Yes |
+| **Follow-up detection** | Yes | No | No | Yes |
+| **Sheet-level chunking** | Yes | No | No | Yes |
+| **Sheet name in output** | Yes | No | Yes | Yes |
 | **Best for** | Unknown structure | Known structure | Validation | Complex questionnaires |

@@ -62,10 +62,10 @@ Create validated question sets ("golden data") to measure extraction accuracy:
 
 | Approach | Method | Use Case |
 |----------|--------|----------|
-| **1. Fully Automatic** | Converts Excel to Markdown, sends entire content to LLM | Quick extraction, no configuration needed |
+| **1. Fully Automatic** | Converts Excel to Markdown, processes each sheet independently via LLM | Quick extraction, no configuration needed |
 | **2. User-Guided** | User maps columns, LLM extracts with context hints | Better accuracy when structure is known |
 | **3. Deterministic + Judge** | Parses questions without LLM, uses Haiku to validate | Fastest, with quality scoring |
-| **4. Multi-Step Pipeline** | Auto-detects structure, extracts with context, detects follow-up questions | Complex questionnaires with dependencies |
+| **4. Multi-Step Pipeline** | Auto-detects structure, resolves columns via metadata, extracts per-sheet with context | Complex questionnaires with dependencies |
 
 ## Quick Start
 

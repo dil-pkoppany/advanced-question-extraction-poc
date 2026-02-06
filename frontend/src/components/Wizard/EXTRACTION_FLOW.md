@@ -45,10 +45,10 @@ uploadFile(file: File) → UploadResponse
 **Options**:
 | Option | Description |
 |--------|-------------|
-| Approach 1 | Fully automatic - no config needed |
+| Approach 1 | Fully automatic with per-sheet chunking - no config needed |
 | Approach 2 | User-guided with column mappings |
 | Approach 3 | Deterministic parsing + LLM judge |
-| Approach 4 | Multi-step pipeline with auto structure detection |
+| Approach 4 | Multi-step pipeline with auto structure detection and column resolution |
 | Model | Opus 4.5 (default) or Sonnet 4.5 |
 | Compare Models | Run with both models side-by-side |
 | Run All | Execute all 4 approaches |
@@ -143,6 +143,8 @@ The comparison view is shown automatically when:
 - `ANSWERS` (orange): Answer options differ
 - `ANS X/Y` or `ANS %` (warning/error): Answer count differs or partial match
 - `DEP: #N` (blue): Question depends on question at row N
+- `ROW N` (indigo): Source Excel row number for the question
+- `SheetName` (green): Source sheet name (truncated to 15 chars if long)
 - `EXTRA` (red): Question not in ground truth
 
 **Duplicate Detection** (in ground truth column):
@@ -161,6 +163,8 @@ The comparison view is shown automatically when:
 - Question type
 - Answer options (if present)
 - Dependencies (if present, with row references)
+- Source Excel row number (ROW badge, when available)
+- Source sheet name (SHEET badge, when available — Approaches 1, 3, and 4)
 - Confidence bar (Approach 3)
 - Unique/different highlighting in comparison mode
 - Ground truth match indicator (✓ or ✗)

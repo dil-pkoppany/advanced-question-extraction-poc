@@ -79,8 +79,8 @@ All models accessed via **AWS Bedrock**.
 
 | Model | ID | Purpose | Settings |
 |-------|-----|---------|----------|
-| **Claude Opus 4.5** | `us.anthropic.claude-opus-4-5-20251101-v1:0` | Primary extraction (Approaches 1 & 2) | temp: 0.1, max_tokens: 24576 |
-| **Claude Sonnet 4.5** | `us.anthropic.claude-sonnet-4-5-20250514-v1:0` | Faster extraction alternative | temp: 0.1, max_tokens: 16384 |
+| **Claude Opus 4.5** | `us.anthropic.claude-opus-4-5-20251101-v1:0` | Primary extraction (Approaches 1, 2 & 4) | temp: 0.1, max_tokens: 32768 |
+| **Claude Sonnet 4.5** | `us.anthropic.claude-sonnet-4-5-20250514-v1:0` | Faster extraction alternative | temp: 0.1, max_tokens: 32768 |
 | **Claude 3 Haiku** | `global.anthropic.claude-3-haiku-20240307-v1:0` | Judge model (Approach 3) | temp: 0.0, max_tokens: 1024 |
 
 ### Model Selection
@@ -120,15 +120,28 @@ All models accessed via **AWS Bedrock**.
 
 ```
 output/runs/{run_id}/
-├── metadata.json              # Run configuration and timestamp
-├── approach_1_result.json     # Approach 1 extraction result
-├── approach_2_result.json     # Approach 2 extraction result
-├── approach_3_result.json     # Approach 3 extraction result
-├── comparison.json            # Side-by-side comparison data
-└── prompts/
-    ├── approach_1_prompt.txt  # Full prompt sent to LLM
-    ├── approach_2_prompt.txt
-    └── approach_3_prompt.txt
+├── metadata.json                              # Run configuration and timestamp
+├── approach_1_result.json                     # Approach 1 extraction result
+├── approach_2_result.json                     # Approach 2 extraction result
+├── approach_3_result.json                     # Approach 3 extraction result
+├── approach_4_result.json                     # Approach 4 extraction result
+├── comparison.json                            # Side-by-side comparison data
+├── prompts/
+│   └── approach_1_prompt.txt                  # Legacy single prompt (if any)
+└── intermediate_results/
+    ├── excel_as_markdown.md                   # Full MarkItDown output (Approach 1)
+    ├── approach_1_sheet_1_prompt.txt          # Per-sheet prompts (Approach 1)
+    ├── approach_1_sheet_1_response.xml        # Per-sheet responses (Approach 1)
+    ├── approach_1_parsed_questions.json       # Combined parsed questions (Approach 1)
+    ├── step1_structure_analysis_prompt.txt    # Structure analysis (Approach 4)
+    ├── step1_structure_analysis_response.xml
+    ├── structure_analysis.json
+    ├── step2_coverage_validation_prompt.txt   # Coverage validation (Approach 4)
+    ├── coverage_validation.json
+    ├── step3_extraction_batch_N_prompt.txt    # Per-sheet extraction (Approach 4)
+    ├── step3_question_extraction_batch_N.xml
+    ├── step3_question_extraction_combined.xml
+    └── normalized_questions.json              # Final normalized output (Approach 4)
 ```
 
 With model comparison enabled, result files are named `approach_X_{model}_result.json`.

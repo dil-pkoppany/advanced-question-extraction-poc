@@ -239,6 +239,24 @@ Step 3 receives **filtered markdown tables** containing only the columns identif
 - Makes multi-row answer options clearly visible as table rows
 - Avoids complex cell-by-cell extraction logic
 
+### Column Name Resolution
+
+A key challenge is that Step 1 uses pandas-style column names (read from row 1 of the Excel sheet), but Step 3 uses openpyxl which reads from the actual `header_row` (often row 4+). These can differ significantly:
+
+| Source | Column 0 name | Column 1 name |
+|--------|---------------|---------------|
+| **Pandas (Step 1)** | `"02.11 Information Security & Risk - General"` | `"Unnamed: 1"` |
+| **Openpyxl header_row=4** | `"Question"` | `"Response"` |
+
+Additionally, the LLM may alter column names in its XML output (e.g., dropping `&` → `"Information Security  Risk"`).
+
+**Resolution strategy** (in `_extract_with_context`):
+
+1. **Pre-resolve indices from pandas metadata**: Build a `{column_name: positional_index}` map from `get_file_metadata()`. Map each Step 1 column name to its positional index.
+2. **Normalized matching fallback**: If exact name match fails, normalize both names (lowercase, strip special characters like `&`, collapse whitespace) and retry. This handles LLM-altered column names.
+3. **Pass indices to markdown generator**: The resolved `column_indices` are passed directly to `generate_filtered_markdown()`, bypassing the broken name-based lookup entirely.
+4. **Resolve prompt column names**: Parse the actual column headers from the generated markdown table and use those in the extraction prompt, so the LLM sees column names matching the table.
+
 ### Input Parameters
 
 - **structure**: Structure analysis from Step 1
@@ -246,7 +264,7 @@ Step 3 receives **filtered markdown tables** containing only the columns identif
 - **Filtered Markdown Generation**: For each sheet, generates markdown with:
   - Row numbers in the first column
   - Only columns identified in Step 1 (`question_column`, `answer_column`, `answer_options_column`, etc.)
-  - Actual column headers from Excel (more readable than "Unnamed: N")
+  - Actual column headers from the openpyxl header row (resolved via pre-computed indices)
   - Row content limited to 100 rows per batch (MAX_ROWS_PER_BATCH)
 
 **Example filtered markdown input:**
@@ -574,7 +592,9 @@ Using GUIDs instead of `sheet:row` references provides several benefits:
 ### Filtered Markdown Tables
 - Step 3 uses filtered markdown tables instead of structured cell extraction
 - Only columns identified in Step 1 are included (reduces token usage)
-- Actual column headers from Excel are preserved (more readable)
+- Column positions are pre-resolved from pandas metadata to openpyxl indices, handling name mismatches
+- Normalized column name matching handles LLM-altered names (e.g., `&` dropped from column names)
+- Actual column headers from the Excel header row are used in the table and prompt
 - Table structure makes multi-row patterns visible to the LLM
 - Row numbers are included for dependency references
 
