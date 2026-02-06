@@ -111,9 +111,9 @@ def __init__(self, model_id: str | None = None):
 def __init__(self, model_id: str | None = None):
     self.settings = get_settings()
     self.parser = ExcelParser()
-    # For approach 3, we always use the judge model (Haiku)
+    # For approach 3, we always use the Sonnet 4.5 judge model
     # This is intentional - approach 3 is about fast validation
-    self.model_id = self.settings.bedrock_judge_model_id
+    self.model_id = self.settings.bedrock_sonnet_model_id
 ```
 
 ### Frontend Changes
@@ -239,8 +239,8 @@ Compare:
 - `Approach 1 (sonnet-4)`
 - `Approach 2 (opus-4.5)`
 - `Approach 2 (sonnet-4)`
-- `Approach 3 (opus-4.5)` (uses Haiku for judging)
-- `Approach 3 (sonnet-4)` (uses Haiku for judging)
+- `Approach 3 (opus-4.5)` (uses Sonnet 4.5 for judging)
+- `Approach 3 (sonnet-4)` (uses Sonnet 4.5 for judging)
 
 ## Benefits
 
@@ -267,7 +267,7 @@ Compare:
 ## Technical Notes
 
 ### Approach 3 (Judge) Behavior
-- Approach 3 always uses **Claude Haiku** as the judge model
+- Approach 3 always uses **Claude Sonnet 4.5** as the judge model
 - This is intentional - the judge only validates, doesn't extract
 - When comparing models in Approach 3, the extraction is deterministic (same for both)
 - The judge model validates both extractions equally
@@ -279,9 +279,8 @@ Compare:
 - Underscores in model names replace dots/hyphens
 
 ### Max Tokens
-- **Opus 4.5**: 24,576 output tokens (75% of 32K max for safety margin)
-- **Sonnet 4**: 8,192 output tokens (default)
-- **Haiku (Judge)**: 1,024 output tokens (validation only)
+- **Opus 4.5**: 32,768 output tokens
+- **Sonnet 4.5**: 32,768 output tokens (extraction) / 16,384 output tokens (judge)
 
 ## Future Enhancements
 

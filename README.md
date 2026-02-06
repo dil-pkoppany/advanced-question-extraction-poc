@@ -73,13 +73,12 @@ flowchart LR
     subgraph llm [AWS Bedrock]
         Opus[Claude Opus 4.5]
         Sonnet[Claude Sonnet 4.5]
-        Haiku[Claude Haiku]
     end
 
     Upload --> Parser
     Config --> A1 & A2 & A3 & A4
     A1 & A2 & A4 --> Opus & Sonnet
-    A3 --> Haiku
+    A3 --> Sonnet
     A1 & A2 & A3 & A4 --> Compare
     Compare --> Results
     GT --> GTStore
@@ -107,7 +106,7 @@ Create validated question sets ("golden data") to measure extraction accuracy:
 |----------|--------|----------|
 | **1. Fully Automatic** | Converts Excel to Markdown, processes each sheet independently via LLM | Quick extraction, no configuration needed |
 | **2. User-Guided** | User maps columns, LLM extracts with context hints | Better accuracy when structure is known |
-| **3. Deterministic + Judge** | Parses questions without LLM, uses Haiku to validate | Fastest, with quality scoring |
+| **3. Deterministic + Judge** | Parses questions without LLM, uses Sonnet 4.5 to validate | Fastest, with quality scoring |
 | **4. Multi-Step Pipeline** | Auto-detects structure, resolves columns via metadata, extracts per-sheet with context | Complex questionnaires with dependencies |
 
 ## Quick Start

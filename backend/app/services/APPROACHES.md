@@ -20,7 +20,7 @@ flowchart TB
 
     subgraph llm [LLM Layer]
         Opus[Opus/Sonnet]
-        Haiku[Haiku Judge]
+        SonnetJudge[Sonnet Judge]
     end
 
     Excel --> A1
@@ -32,11 +32,11 @@ flowchart TB
 
     A1 --> Opus
     A2 --> Opus
-    A3 --> Haiku
+    A3 --> SonnetJudge
     A4 --> Opus
 
     Opus --> XML[XML Response]
-    Haiku --> JSON[JSON Scores]
+    SonnetJudge --> JSON[JSON Scores]
 ```
 
 ## Approach 1: Fully Automatic (`approach_auto.py`)
@@ -225,7 +225,7 @@ Return ONLY the XML.
 ### Process
 
 1. Parse rows directly from specified columns (no LLM)
-2. Run Haiku judge model on batches of 10 questions
+2. Run Sonnet 4.5 judge model on batches of 10 questions
 3. Assign confidence scores and validity flags
 4. Return questions with quality metadata
 
@@ -407,15 +407,15 @@ Models are selected in `config.py`:
 bedrock_opus_model_id = "us.anthropic.claude-opus-4-5-20251101-v1:0"
 bedrock_sonnet_model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
-# Judge model (Approach 3 only)
-bedrock_judge_model_id = "global.anthropic.claude-3-haiku-20240307-v1:0"
+# Judge model (Approach 3 only) — uses Sonnet 4.5
+bedrock_sonnet_model_id = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 ```
 
 **Model parameters:**
 
-| Setting | Extraction | Judge |
-|---------|------------|-------|
-| `max_tokens` | 32,768 | 1,024 |
+| Setting | Extraction | Judge (Sonnet 4.5) |
+|---------|------------|---------------------|
+| `max_tokens` | 32,768 | 16,384 |
 | `temperature` | 0.1 | 0.0 |
 
 ---
@@ -429,7 +429,7 @@ bedrock_judge_model_id = "global.anthropic.claude-3-haiku-20240307-v1:0"
 | **Accuracy metric** | No | Yes | N/A | No |
 | **Confidence scores** | No | No | Yes | No |
 | **Speed** | Medium | Slow | Fast | Medium |
-| **Model used** | Opus/Sonnet | Opus/Sonnet | Haiku | Opus/Sonnet |
+| **Model used** | Opus/Sonnet | Opus/Sonnet | Sonnet 4.5 | Opus/Sonnet |
 | **Dependencies detected** | Yes | No | No | Yes |
 | **Follow-up detection** | Yes | No | No | Yes |
 | **Sheet-level chunking** | Yes | No | No | Yes |
