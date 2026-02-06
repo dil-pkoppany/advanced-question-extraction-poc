@@ -99,6 +99,18 @@ interface DuplicateModalProps {
 
 Form for creating and editing ground truths.
 
+**Props:**
+```typescript
+interface GroundTruthEditorProps {
+  isEditing?: boolean;            // Whether editing an existing GT (vs. creating new)
+  existingData?: GroundTruth;     // Pre-populate editor with this data (edit mode)
+  fileMetadata?: FileMetadata;    // Sheet names from uploaded Excel (create mode)
+  existingFileNames?: string[];   // Lowercase normalized names for collision detection
+  onSave: () => void;
+  onCancel: () => void;
+}
+```
+
 **Features:**
 - File upload to extract sheet names
 - Manual filename entry option
@@ -280,6 +292,24 @@ interface GroundTruth {
 }
 ```
 
+### GroundTruthUpdate
+
+Used when updating an existing ground truth (PUT endpoint). All fields are optional — only provided fields are applied.
+
+```typescript
+interface GroundTruthUpdate {
+  file_name?: string;   // Updates file_name AND file_name_normalized
+  created_by?: string;
+  notes?: string;
+  sheets?: GroundTruthSheet[];
+}
+```
+
+When `file_name` is provided in an update:
+- `file_name` is set to the new value
+- `file_name_normalized` is re-computed as `file_name.lower()`
+- `version` is auto-incremented
+
 ---
 
 ## Storage
@@ -291,6 +321,18 @@ output/ground_truth/{ground_truth_id}.json
 ```
 
 Example filename: `gt_20260128_123456_a1b2c3d4.json`
+
+### Auto-healing & Robust Matching
+
+The backend implements two safety mechanisms for `file_name_normalized`:
+
+1. **Auto-healing on load** — When a ground truth JSON is loaded (e.g., after manual edits), the backend checks if `file_name_normalized` matches `file_name.lower()`. If not, it corrects the value and re-saves the file.
+
+2. **Robust filename matching** — When looking up a ground truth by filename (for comparison or display), the backend checks *both*:
+   - The stored `file_name_normalized` field
+   - A runtime-normalized `file_name.lower()` of the original `file_name`
+
+   This ensures manually copied or edited JSON files are matched correctly even if `file_name_normalized` was set incorrectly (e.g., not lowercased).
 
 ### File Format
 
