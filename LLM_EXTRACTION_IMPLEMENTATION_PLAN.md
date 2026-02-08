@@ -2,7 +2,11 @@
 
 ## Overview
 
-This document outlines the implementation plan for integrating the LLM-based question extraction pipeline (Approach 4) into the production backend. The feature automatically extracts questions, answer options, and dependencies from uploaded Excel survey files.
+This document outlines the implementation plan for integrating LLM-based question extraction into the production backend. The initial implementation uses **Approach 1 (Fully Automatic)** — the simplest and most proven extraction method. The architecture is designed with a **Strategy pattern** so that it can be extended to Approach 4 (Multi-Step Pipeline) if higher accuracy is needed for complex questionnaire formats, without requiring database or API changes.
+
+The feature automatically extracts questions, answer options, help text, conditional inputs, and dependencies from uploaded Excel survey files using per-sheet LLM calls.
+
+See [APPROACH_1.md](backend/app/services/APPROACH_1.md) for detailed technical documentation of the extraction pipeline.
 
 ---
 
@@ -128,21 +132,25 @@ Following the workspace naming convention (`{scope}_{feature}`):
 
 ## Pydantic Configuration
 
-Create a dedicated configuration file for per-step model settings:
+Create a dedicated configuration file for the extraction service. The initial implementation uses a single model configuration (Approach 1). The `StepModelConfig` class is included for forward-compatibility with Approach 4 but is not used in the initial release.
 
 ```python
 # config/extraction_config.py
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Literal, Optional
 
 
 class StepModelConfig(BaseModel):
-    """Configuration for a single pipeline step."""
+    """Configuration for a single LLM pipeline step.
+    
+    Used by Approach 1 as a single extraction config.
+    Reserved for Approach 4 per-step configs (structure, validation, extraction).
+    """
     
     model_id: str = Field(
-        description="Bedrock model ID (e.g., anthropic.claude-sonnet-4-5-20250514-v1:0)"
+        description="Bedrock model ID (e.g., anthropic.claude-sonnet-4-5-20250929-v1:0)"
     )
     inference_profile_arn: Optional[str] = Field(
         default=None,
@@ -159,9 +167,9 @@ class StepModelConfig(BaseModel):
     )
 
 
-class ExtractionPipelineConfig(BaseSettings):
+class ExtractionConfig(BaseSettings):
     """
-    Configuration for the 4-step extraction pipeline.
+    Configuration for the question extraction pipeline.
     
     Environment variables override defaults with prefix EXTRACTION_.
     Example: EXTRACTION_ENABLED=true
@@ -179,35 +187,39 @@ class ExtractionPipelineConfig(BaseSettings):
         description="Whether extracted questions require human review"
     )
     
-    # Step 1: Structure Analysis
-    step1_structure_analysis: StepModelConfig = Field(
-        default_factory=lambda: StepModelConfig(
-            model_id="anthropic.claude-sonnet-4-5-20250514-v1:0",
-            max_output_tokens=8192,
-            temperature=0.1
-        ),
-        description="Model config for analyzing Excel structure"
+    # Approach selection (extensibility point)
+    approach: Literal["auto", "pipeline"] = Field(
+        default="auto",
+        description=(
+            "'auto' = Approach 1 (MarkItDown + per-sheet LLM). "
+            "'pipeline' = Approach 4 (structure analysis + filtered extraction). "
+            "Start with 'auto'; switch to 'pipeline' if accuracy needs improvement."
+        )
     )
     
-    # Step 2: Coverage Validation
-    step2_coverage_validation: StepModelConfig = Field(
+    # Extraction model config (Approach 1 uses this single config)
+    extraction: StepModelConfig = Field(
         default_factory=lambda: StepModelConfig(
-            model_id="anthropic.claude-sonnet-4-5-20250514-v1:0",
-            max_output_tokens=4096,
-            temperature=0.0  # Deterministic for validation
-        ),
-        description="Model config for validating structure coverage"
-    )
-    
-    # Step 3: Question Extraction
-    step3_question_extraction: StepModelConfig = Field(
-        default_factory=lambda: StepModelConfig(
-            model_id="anthropic.claude-sonnet-4-5-20250514-v1:0",
-            max_output_tokens=16384,
+            model_id="anthropic.claude-sonnet-4-5-20250929-v1:0",
+            max_output_tokens=32768,
             temperature=0.1
         ),
-        description="Model config for extracting questions (largest output)"
+        description="Model config for question extraction (Approach 1)"
     )
+    
+    # Preprocessing
+    checkbox_preprocessing_enabled: bool = Field(
+        default=True,
+        description=(
+            "Extract checkbox labels from VML drawings before MarkItDown conversion. "
+            "Only applies to .xlsx files with embedded checkboxes."
+        )
+    )
+    
+    # --- Reserved for Approach 4 (not used in initial implementation) ---
+    # step1_structure_analysis: StepModelConfig (structure column detection)
+    # step2_coverage_validation: StepModelConfig (validation)
+    # step3_question_extraction: StepModelConfig (filtered extraction)
     
     # Global settings
     extraction_timeout_seconds: int = Field(
@@ -229,7 +241,7 @@ class ExtractionPipelineConfig(BaseSettings):
 
 
 # Singleton instance
-extraction_config = ExtractionPipelineConfig()
+extraction_config = ExtractionConfig()
 ```
 
 **Usage in service:**
@@ -237,17 +249,17 @@ extraction_config = ExtractionPipelineConfig()
 ```python
 from config.extraction_config import extraction_config
 
-class QuestionExtractionService:
-    async def _run_step1(self, file_path: str) -> dict:
-        config = extraction_config.step1_structure_analysis
+class AutoExtractionStrategy:
+    async def extract(self, file_path: str, run_id: str | None = None) -> ExtractionResult:
+        config = extraction_config.extraction
         response = await self._invoke_llm(
-            prompt=self._build_structure_prompt(file_path),
+            prompt=self._build_prompt(sheet_content, sheet_name),
             model_id=config.model_id,
             max_tokens=config.max_output_tokens,
             temperature=config.temperature,
             inference_profile_arn=config.inference_profile_arn
         )
-        return self._parse_structure(response)
+        return self._parse_response(response)
 ```
 
 ---
@@ -260,7 +272,9 @@ sequenceDiagram
     participant API as Upload API
     participant FF as FeatureFlag
     participant CFG as ExtractionConfig
-    participant Svc as ExtractionService
+    participant Orch as ExtractionOrchestrator
+    participant Preproc as CheckboxPreprocessor
+    participant Svc as AutoExtractionStrategy
     participant LLM as AWS Bedrock
     participant DB as PostgreSQL
     
@@ -270,50 +284,254 @@ sequenceDiagram
     
     alt Feature enabled
         API->>CFG: Load extraction config
-        API->>Svc: extract_questions(survey_id, file_path, config)
-        Svc->>DB: Update survey.extraction_status = "in_progress"
-        
-        rect rgb(240, 248, 255)
-            Note over Svc,LLM: Step 1: Structure Analysis
-            Svc->>LLM: Send structure prompt (config.step1)
-            LLM-->>Svc: XML structure response
-        end
-        
-        rect rgb(240, 255, 240)
-            Note over Svc,LLM: Step 2: Coverage Validation
-            Svc->>LLM: Send validation prompt (config.step2)
-            LLM-->>Svc: XML validation response
-        end
+        API->>Orch: run(survey_id, file_path, tenant_id)
+        Orch->>DB: Update survey.extraction_status = "in_progress"
         
         rect rgb(255, 248, 240)
-            Note over Svc,LLM: Step 3: Question Extraction (per sheet)
+            Note over Orch,Preproc: Step 0: Checkbox Preprocessing
+            Orch->>Preproc: preprocess(file_path)
+            Note over Preproc: Extract VML labels to new column (if checkboxes found)
+            Preproc-->>Orch: preprocessed_file_path
+        end
+        
+        rect rgb(240, 248, 255)
+            Note over Svc,LLM: Step 1-3: MarkItDown + Split + Extract
+            Orch->>Svc: extract(preprocessed_file_path, run_id)
+            Svc->>Svc: Convert Excel to Markdown (MarkItDown)
+            Svc->>Svc: Split markdown by sheet headers
             loop For each sheet
-                Svc->>LLM: Send extraction prompt (config.step3)
+                Svc->>LLM: Send extraction prompt
                 LLM-->>Svc: XML questions response
             end
         end
         
         rect rgb(248, 240, 255)
-            Note over Svc: Step 4: Normalization (no LLM)
-            Svc->>Svc: Generate GUIDs, resolve dependencies
+            Note over Svc: Step 4-5: Parse + Normalize
+            Svc->>Svc: Parse XML, generate GUIDs
+            Svc->>Svc: Resolve dependencies (seq to GUID)
         end
         
-        Svc->>DB: Create Questions (with GUIDs)
-        Svc->>DB: Create QuestionOptions
-        Svc->>DB: Create QuestionDependencies
-        Svc->>DB: Create QuestionConditionalInputs
-        Svc->>DB: Update survey.extraction_status = "completed"
+        Svc-->>Orch: ExtractionResult
+        Orch->>DB: Create Questions (with GUIDs)
+        Orch->>DB: Create QuestionOptions
+        Orch->>DB: Create QuestionDependencies
+        Orch->>DB: Create QuestionConditionalInputs
+        Orch->>DB: Update survey.extraction_status = "completed"
         
         alt Review required (config.require_review)
-            Svc-->>API: Return pending_review
+            Orch-->>API: Return pending_review
             API-->>User: Survey ready for review
         else No review required
-            Svc-->>API: Return approved
+            Orch-->>API: Return approved
             API-->>User: Survey ready
         end
     else Feature disabled
         API-->>User: Manual question entry required
     end
+```
+
+---
+
+## Service Layer — Extensible Architecture
+
+The service layer uses a **Strategy pattern** with shared components to enable easy extension from Approach 1 to Approach 4 without changing the orchestrator, database, or API layers.
+
+```mermaid
+flowchart TB
+    subgraph shared [Shared Components]
+        Preproc[CheckboxPreprocessor]
+        MDConv[MarkdownConverter]
+        XMLParse[XmlResponseParser]
+        Persist[QuestionPersister]
+    end
+    
+    subgraph strategies [Extraction Strategies]
+        A1["AutoExtractionStrategy (Approach 1)"]
+        A4["PipelineExtractionStrategy (Approach 4, future)"]
+    end
+    
+    Orchestrator[ExtractionOrchestrator] --> Preproc
+    Orchestrator --> A1
+    Orchestrator -.-> A4
+    A1 --> MDConv
+    A1 --> XMLParse
+    A4 -.-> MDConv
+    A4 -.-> XMLParse
+    Orchestrator --> Persist
+```
+
+> Dashed lines indicate the future Approach 4 path. Solid lines are the initial Approach 1 implementation.
+
+### ExtractionStrategy Protocol
+
+```python
+from typing import Protocol
+
+class ExtractionStrategy(Protocol):
+    """Interface for extraction approaches.
+    
+    Both Approach 1 (auto) and Approach 4 (pipeline) implement this.
+    The orchestrator selects the strategy based on config.approach.
+    """
+    
+    async def extract(
+        self,
+        file_path: str,
+        run_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> ExtractionResult: ...
+```
+
+### Shared Components
+
+| Component | Responsibility | Used By |
+|-----------|---------------|---------|
+| `CheckboxPreprocessor` | Extract VML checkbox labels, write to temp column, manage temp files | Both approaches |
+| `MarkdownConverter` | MarkItDown wrapper + NaN cleanup + CSV fallback | Both approaches |
+| `XmlResponseParser` | XML parsing, GUID generation, dependency resolution (two-pass) | Both approaches |
+| `QuestionPersister` | Bulk DB writes for questions, options, dependencies, conditional inputs | Both approaches |
+
+### ExtractionOrchestrator
+
+```python
+class ExtractionOrchestrator:
+    """Orchestrates the full extraction pipeline.
+    
+    Coordinates preprocessing, strategy execution, and persistence.
+    Selects strategy based on config.approach.
+    """
+    
+    def __init__(
+        self,
+        config: ExtractionConfig,
+        preprocessor: CheckboxPreprocessor,
+        auto_strategy: AutoExtractionStrategy,
+        # pipeline_strategy: PipelineExtractionStrategy,  # Future
+        persister: QuestionPersister,
+        survey_repo: SurveyRepository,
+    ):
+        self.config = config
+        self.preprocessor = preprocessor
+        self.persister = persister
+        self.survey_repo = survey_repo
+        
+        # Strategy selection
+        self._strategies: dict[str, ExtractionStrategy] = {
+            "auto": auto_strategy,
+            # "pipeline": pipeline_strategy,  # Future: Approach 4
+        }
+    
+    async def run(
+        self,
+        survey_id: str,
+        file_path: str,
+        tenant_id: str,
+    ) -> ExtractionResult:
+        """
+        Run the full extraction pipeline:
+        1. Preprocess (checkbox labels)
+        2. Extract (strategy-dependent)
+        3. Persist (DB writes)
+        """
+        # Update status
+        await self.survey_repo.update_extraction_status(
+            survey_id, "in_progress", tenant_id
+        )
+        
+        try:
+            # Step 0: Preprocess
+            preprocessed_path = file_path
+            if self.config.checkbox_preprocessing_enabled:
+                preprocessed_path = self.preprocessor.preprocess(file_path)
+            
+            # Select strategy
+            strategy = self._strategies[self.config.approach]
+            
+            # Run extraction
+            result = await strategy.extract(
+                preprocessed_path,
+                run_id=f"run_{survey_id}",
+                tenant_id=tenant_id,
+            )
+            
+            # Persist results
+            if result.success and result.questions:
+                await self.persister.persist(
+                    survey_id=survey_id,
+                    questions=result.questions,
+                    tenant_id=tenant_id,
+                    require_review=self.config.require_review,
+                )
+            
+            # Update status
+            status = "completed" if result.success else "failed"
+            await self.survey_repo.update_extraction_status(
+                survey_id, status, tenant_id,
+                metadata=result.metrics.model_dump() if result.metrics else None,
+            )
+            
+            return result
+            
+        except Exception as e:
+            await self.survey_repo.update_extraction_status(
+                survey_id, "failed", tenant_id
+            )
+            raise
+    
+    async def approve_questions(
+        self,
+        survey_id: str,
+        question_ids: list[str],
+        tenant_id: str,
+        approved_by: str,
+    ) -> None:
+        """Approve extracted questions after review."""
+        
+    async def reject_questions(
+        self,
+        survey_id: str,
+        question_ids: list[str],
+        tenant_id: str,
+        rejected_by: str,
+        reason: str,
+    ) -> None:
+        """Reject extracted questions."""
+```
+
+### AutoExtractionStrategy (Approach 1)
+
+```python
+class AutoExtractionStrategy:
+    """Fully automatic extraction: MarkItDown + per-sheet LLM.
+    
+    Ported from POC approach_auto.py.
+    """
+    
+    def __init__(
+        self,
+        bedrock_client: BedrockClient,
+        config: StepModelConfig,
+        markdown_converter: MarkdownConverter,
+        xml_parser: XmlResponseParser,
+    ):
+        self.bedrock = bedrock_client
+        self.config = config
+        self.converter = markdown_converter
+        self.parser = xml_parser
+    
+    async def extract(
+        self,
+        file_path: str,
+        run_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> ExtractionResult:
+        """
+        1. Convert Excel to Markdown
+        2. Split by sheet headers
+        3. LLM extraction per sheet
+        4. Parse XML + GUID generation
+        5. Dependency resolution
+        """
 ```
 
 ---
@@ -328,6 +546,8 @@ sequenceDiagram
 | 4 | `create_question_conditional_inputs_table` | New table for "if yes, provide detail" |
 | 5 | `alter_questions_add_extraction_fields` | Add help_text, source_row_index, extraction_confidence, etc. |
 | 6 | `alter_surveys_add_extraction_fields` | Add extraction_status, extraction_metadata, etc. |
+
+> **Note**: These migrations are forward-compatible with both Approach 1 and Approach 4. All fields (`help_text`, `dependencies`, `conditional_inputs`, `source_sheet_name`) are populated by Approach 1 already. No database changes are needed when upgrading to Approach 4.
 
 ---
 
@@ -437,72 +657,18 @@ require_extraction_review: bool = True       # Configurable per survey
 
 ---
 
-## Service Layer
-
-### QuestionExtractionService
-
-```python
-class QuestionExtractionService:
-    """Orchestrates LLM-based question extraction from Excel surveys."""
-    
-    def __init__(
-        self,
-        bedrock_client: BedrockClient,
-        config: ExtractionPipelineConfig,
-        question_repo: QuestionRepository,
-        option_repo: QuestionOptionRepository,
-        dependency_repo: QuestionDependencyRepository,
-        conditional_repo: QuestionConditionalInputRepository,
-        survey_repo: SurveyRepository,
-    ):
-        self.bedrock = bedrock_client
-        self.config = config
-        # ... repos
-    
-    async def extract_questions(
-        self,
-        survey_id: str,
-        file_path: str,
-        tenant_id: str,
-    ) -> ExtractionResult:
-        """
-        Run 4-step pipeline extraction.
-        
-        Returns:
-            ExtractionResult with questions, metrics, and status
-        """
-        
-    async def approve_questions(
-        self,
-        survey_id: str,
-        question_ids: List[str],
-        tenant_id: str,
-        approved_by: str,
-    ) -> None:
-        """Approve extracted questions after review."""
-        
-    async def reject_questions(
-        self,
-        survey_id: str,
-        question_ids: List[str],
-        tenant_id: str,
-        rejected_by: str,
-        reason: str,
-    ) -> None:
-        """Reject extracted questions."""
-```
-
----
-
 ## Error Handling
 
 | Scenario | Handling |
 |----------|----------|
 | LLM timeout | Retry up to `config.max_retries` times, then mark as "failed" |
 | Partial extraction | Save extracted questions, mark survey as "partial" |
+| Per-sheet failure | Other sheets' results are preserved; failed sheet contributes 0 questions |
+| Incomplete XML | Parser appends `</questions>` and recovers questions before truncation |
 | Invalid Excel format | Return validation error before extraction starts |
 | Feature flag off | Skip extraction, allow manual entry |
 | Bedrock unavailable | Log error, mark as "failed", allow manual retry |
+| No VML checkboxes | Preprocessing is a no-op; pipeline continues normally |
 
 ---
 
@@ -511,10 +677,12 @@ class QuestionExtractionService:
 ### Metrics
 
 - `extraction_duration_ms` - Total pipeline duration
-- `extraction_step_duration_ms` - Duration per step (labeled by step)
+- `extraction_llm_calls_count` - Number of per-sheet LLM invocations
 - `extraction_questions_count` - Number of questions extracted
-- `extraction_llm_calls_count` - Number of LLM invocations
+- `extraction_tokens_input` - Approximate total input tokens
+- `extraction_tokens_output` - Approximate total output tokens
 - `extraction_errors_count` - Extraction failures (labeled by error type)
+- `extraction_checkbox_preprocessing_ms` - Checkbox preprocessing duration (if applicable)
 
 ### Logging
 
@@ -525,9 +693,12 @@ logger.info(
         "survey_id": survey_id,
         "tenant_id": tenant_id,
         "extraction_run_id": run_id,
+        "approach": config.approach,
         "questions_extracted": len(questions),
+        "sheets_processed": total_llm_calls,
         "duration_ms": duration,
-        "model_id": config.step3_question_extraction.model_id,
+        "model_id": config.extraction.model_id,
+        "checkbox_preprocessing": config.checkbox_preprocessing_enabled,
     }
 )
 ```
@@ -542,14 +713,72 @@ logger.info(
 
 ## Implementation Order
 
-1. **Feature Flag** - Register in LaunchDarkly
-2. **Pydantic Config** - Create `extraction_config.py`
-3. **Database Migrations** - All 6 migrations
+1. **Feature Flag** - Register `survey_llm_question_extraction` in LaunchDarkly
+2. **Pydantic Config** - Create `extraction_config.py` with simplified Approach 1 config
+3. **Database Migrations** - All 6 migrations (forward-compatible with both approaches)
 4. **Models** - QuestionOption, QuestionDependency, QuestionConditionalInput
-5. **Repositories** - CRUD for new models
-6. **Service** - Port `approach_pipeline.py` as `QuestionExtractionService`
-7. **API Integration** - Upload flow + review endpoints
-8. **Testing** - Unit + integration tests
+5. **Repositories** - CRUD for new models + bulk insert methods
+6. **Checkbox Preprocessor** - Port `checkbox_label_poc.py` to production service
+7. **Shared Components** - MarkdownConverter, XmlResponseParser, QuestionPersister
+8. **Auto Extraction Strategy** - Port `approach_auto.py` using shared components
+9. **Orchestrator** - ExtractionOrchestrator with strategy selection
+10. **API Integration** - Upload flow + review endpoints
+11. **Testing** - Unit + integration tests
+
+---
+
+## Simplifications vs Approach 4
+
+Approach 1 is significantly simpler than Approach 4, making it the right choice for the initial enterprise integration:
+
+| Aspect | Approach 1 (Initial) | Approach 4 (Future) |
+|--------|---------------------|---------------------|
+| **LLM calls per file** | 1 per sheet | 2 + N per sheet |
+| **Structure detection** | Implicit (LLM infers) | Explicit (LLM analyzes columns) |
+| **Column filtering** | None (full markdown) | Only question/answer columns |
+| **Config complexity** | Single `StepModelConfig` | 3 separate `StepModelConfig`s |
+| **Preprocessing** | Checkbox VML + MarkItDown | Same + pandas metadata analysis |
+| **Implementation effort** | ~5-8 story points | ~13 story points |
+
+**What Approach 1 does NOT do** (handled by Approach 4):
+- No structure analysis step (LLM column identification)
+- No coverage validation step (LLM structure completeness check)
+- No filtered markdown generation (sends all columns, not just question/answer)
+- No column name resolution across pandas/openpyxl mismatches
+
+---
+
+## Extension Path to Approach 4
+
+When accuracy requirements demand upgrading to Approach 4, the following changes are needed. Critically, **no database or API changes are required**.
+
+### What to Add
+
+1. **`PipelineExtractionStrategy`** class implementing `ExtractionStrategy` protocol
+   - Port `approach_pipeline.py` from the POC
+   - Uses structure analysis (Step 1), coverage validation (Step 2), filtered extraction (Step 3)
+2. **Per-step model configs** in `ExtractionConfig`:
+   - `step1_structure_analysis: StepModelConfig`
+   - `step2_coverage_validation: StepModelConfig`
+   - `step3_question_extraction: StepModelConfig`
+3. **`ExcelMetadataService`** for pandas-based column metadata (used by Step 1)
+4. **`FilteredMarkdownGenerator`** for column-filtered markdown tables (used by Step 3)
+5. **Column name resolution** logic handling pandas/openpyxl naming mismatches
+
+### What to Change
+
+1. **Config**: Set `approach: "pipeline"` in `ExtractionConfig`
+2. **Orchestrator**: Register the new strategy in `_strategies` dict
+3. **Tests**: Add pipeline-specific unit and integration tests
+
+### What Stays the Same
+
+- Database schema (all fields already supported)
+- API endpoints (same request/response shapes)
+- Feature flag (same flag, same behavior)
+- Shared components (CheckboxPreprocessor, XmlResponseParser, QuestionPersister)
+- Review workflow (approve/reject)
+- Observability (same metrics, extended with step-level timing)
 
 ---
 
@@ -558,22 +787,28 @@ logger.info(
 ### Unit Tests
 
 - Config validation and defaults
-- GUID generation and dependency resolution
-- XML parsing edge cases
+- Checkbox preprocessing (VML extraction, temp file management)
+- MarkItDown conversion + NaN cleanup
+- Per-sheet splitting (regex, single-sheet fallback, empty sheets)
+- GUID generation and dependency resolution (two-pass)
+- XML parsing edge cases (truncated XML, missing tags, unknown types)
 - Question type mapping
 
 ### Integration Tests
 
-- Full extraction pipeline with mock Bedrock
-- Feature flag toggle behavior
+- Full extraction pipeline with mock Bedrock (multi-sheet)
+- Checkbox preprocessing with real Excel files containing VML checkboxes
+- Feature flag toggle behavior (ON/OFF)
 - Review workflow (approve/reject)
-- Multi-sheet Excel handling
+- Strategy selection (config.approach = "auto")
+- Partial failure (one sheet fails, others succeed)
 
 ### Manual Testing
 
 - Various Excel formats (ESG surveys, vendor questionnaires)
-- Large files (500+ questions)
-- Error scenarios (malformed Excel, LLM failures)
+- Files with embedded checkboxes (VML preprocessing validation)
+- Large files (500+ questions, 20+ sheets)
+- Error scenarios (malformed Excel, LLM failures, Bedrock timeouts)
 
 ---
 
@@ -583,11 +818,13 @@ logger.info(
    - Enable for internal tenant only
    - Require review for all extractions
    - Monitor error rates and accuracy
+   - Validate checkbox preprocessing on real survey files
 
 2. **Phase 2: Beta**
    - Enable for select beta tenants
    - Gather feedback on extraction quality
    - Tune model parameters if needed
+   - Evaluate whether Approach 4 is needed for specific file formats
 
 3. **Phase 3: GA**
    - Enable for all tenants (opt-in)

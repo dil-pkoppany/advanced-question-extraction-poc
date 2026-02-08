@@ -30,7 +30,7 @@ High
 
 ## Story Points
 
-13 (Large)
+10 (Large)
 
 ---
 
@@ -44,7 +44,7 @@ Survey Management
 
 ### Summary
 
-Integrate the multi-step LLM pipeline (Approach 4) to automatically extract questions, answer options, and dependencies from uploaded Excel survey files. This feature will significantly reduce manual data entry and improve survey setup time.
+Integrate the fully automatic LLM extraction pipeline (Approach 1) to automatically extract questions, answer options, help text, conditional inputs, and dependencies from uploaded Excel survey files. The service architecture uses a Strategy pattern so it can be extended to Approach 4 (multi-step pipeline) if higher accuracy is needed, without changing the database or API layers.
 
 ### User Story
 
@@ -54,17 +54,23 @@ Integrate the multi-step LLM pipeline (Approach 4) to automatically extract ques
 
 ### Background
 
-Currently, when users upload Excel survey files, questions must be manually entered into the system. This is time-consuming for large surveys (100+ questions) and error-prone. The LLM extraction pipeline has been prototyped and validated in a POC, demonstrating high accuracy for various survey formats.
+Currently, when users upload Excel survey files, questions must be manually entered into the system. This is time-consuming for large surveys (100+ questions) and error-prone. The LLM extraction pipeline has been prototyped and validated in a POC, demonstrating high accuracy for various survey formats including multi-sheet ESG questionnaires with embedded checkboxes.
 
 ### Technical Approach
 
-The feature uses a 4-step pipeline:
-1. **Structure Analysis** - LLM identifies question/answer columns
-2. **Coverage Validation** - LLM validates structure completeness
-3. **Question Extraction** - LLM extracts questions with types, options, dependencies
-4. **Normalization** - Convert to database models with GUIDs
+The feature uses Approach 1 (Fully Automatic) with an extensible architecture:
 
-See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
+1. **Checkbox Preprocessing** (optional) — Extract checkbox labels from VML drawings and write to a new column so MarkItDown can see them
+2. **MarkItDown Conversion** — Convert the full Excel file to Markdown
+3. **Per-Sheet Splitting** — Split Markdown by `## SheetName` headers to avoid LLM output token truncation
+4. **LLM Extraction** — Send each sheet independently to the LLM; receive structured XML
+5. **Normalization** — Parse XML, generate GUIDs, resolve dependencies (two-pass)
+6. **DB Persistence** — Create Question, QuestionOption, QuestionDependency, QuestionConditionalInput records
+
+The Strategy pattern allows switching to Approach 4 (structure analysis + filtered extraction) via config change (`approach: "pipeline"`) when accuracy improvements are needed.
+
+See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.  
+See `backend/app/services/APPROACH_1.md` for detailed Approach 1 pipeline documentation.
 
 ### Feature Flag
 
@@ -89,10 +95,13 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 ### Configuration
 
 - [ ] Pydantic config file `extraction_config.py` exists
-- [ ] Config supports per-step model configuration:
-  - [ ] `step1_structure_analysis` with model_id, inference_profile_arn, max_output_tokens, temperature
-  - [ ] `step2_coverage_validation` with model_id, inference_profile_arn, max_output_tokens, temperature
-  - [ ] `step3_question_extraction` with model_id, inference_profile_arn, max_output_tokens, temperature
+- [ ] Config supports extraction model configuration:
+  - [ ] `extraction` with model_id, inference_profile_arn, max_output_tokens, temperature
+- [ ] Config supports approach selection:
+  - [ ] `approach` field with values `"auto"` (Approach 1) and `"pipeline"` (Approach 4, future)
+  - [ ] Default: `"auto"`
+- [ ] Config supports preprocessing toggle:
+  - [ ] `checkbox_preprocessing_enabled` (bool, default: true)
 - [ ] Config supports global settings:
   - [ ] `enabled` (bool)
   - [ ] `require_review` (bool)
@@ -140,6 +149,7 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
   - `require_extraction_review` (BOOL, default true)
 - [ ] All migrations are reversible (down migrations work)
 - [ ] Migrations include appropriate indexes for foreign keys
+- [ ] Schema is forward-compatible with Approach 4 (no changes needed on upgrade)
 
 ### Models
 
@@ -159,21 +169,41 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 - [ ] `SurveyRepository` updated to handle new fields
 - [ ] Bulk insert methods available for options, dependencies, conditional inputs
 
+### Checkbox Preprocessing
+
+- [ ] `CheckboxPreprocessor` service created
+- [ ] Extracts checkbox labels from VML drawings (`vmlDrawing*.xml`) inside `.xlsx` ZIP
+- [ ] Writes labels to a new "Checkbox Alt texts" column in a temporary copy
+- [ ] Handles all sheets (not just one hardcoded sheet)
+- [ ] Handles all rows with checkboxes (no hardcoded row range)
+- [ ] Operates on a temp copy (never modifies original upload)
+- [ ] No-op when file has no VML checkboxes (returns original path)
+- [ ] XML-escapes special characters in labels (`&`, `<`, `>`, `"`)
+
 ### Extraction Service
 
-- [ ] `QuestionExtractionService` class created
-- [ ] Service implements 4-step pipeline:
-  - [ ] Step 1: Structure Analysis using config.step1_structure_analysis
-  - [ ] Step 2: Coverage Validation using config.step2_coverage_validation
-  - [ ] Step 3: Question Extraction using config.step3_question_extraction
-  - [ ] Step 4: Normalization (no LLM)
-- [ ] Each question receives a unique GUID during normalization
-- [ ] Dependencies reference target questions by GUID
-- [ ] Sheet names are correctly populated (not generic "Sheet1")
-- [ ] Service handles multi-sheet Excel files correctly
+- [ ] `ExtractionStrategy` protocol defined with `extract()` method
+- [ ] `AutoExtractionStrategy` class implements `ExtractionStrategy` (Approach 1)
+- [ ] `ExtractionOrchestrator` coordinates preprocessing, strategy execution, and persistence
+- [ ] Orchestrator selects strategy based on `config.approach`
+- [ ] Service converts Excel to Markdown using MarkItDown
+- [ ] Service splits Markdown by `## SheetName` headers into per-sheet chunks
+- [ ] Service sends one LLM call per sheet for question extraction
+- [ ] Service parses XML responses using BeautifulSoup
+- [ ] Each question receives a unique GUID during normalization (two-pass)
+- [ ] Dependencies reference target questions by GUID (resolved from seq numbers)
+- [ ] Sheet names are correctly injected into each question (not generic "Sheet1")
+- [ ] Service handles multi-sheet Excel files correctly (28+ sheets tested in POC)
 - [ ] Service saves intermediate results when `config.save_intermediate_results=true`
-- [ ] Service sets `extraction_confidence` for each question
 - [ ] Service supports inference profile ARN when configured
+- [ ] Per-sheet failure is isolated (other sheets' results preserved)
+
+### Shared Components
+
+- [ ] `MarkdownConverter` wraps MarkItDown with NaN cleanup and CSV fallback
+- [ ] `XmlResponseParser` handles XML parsing, GUID generation, and dependency resolution
+- [ ] `QuestionPersister` handles bulk DB writes for all question-related entities
+- [ ] All shared components are reusable by future Approach 4 implementation
 
 ### Question Type Extraction
 
@@ -191,7 +221,7 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
   - "If you can not...", "If no...", "If not..."
   - "Please explain...", "Please detail...", "Please provide..."
 - [ ] Creates correct `QuestionDependency` relationships
-- [ ] Dependencies use GUID references (not row numbers)
+- [ ] Dependencies use GUID references (not seq numbers or row numbers)
 - [ ] Supports both "show" and "skip" dependency actions
 - [ ] Supports condition types: "equals", "contains", "not_empty"
 
@@ -203,7 +233,7 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 - [ ] `survey.extraction_status` is set to "failed" when extraction fails after retries
 - [ ] `survey.extraction_status` is set to "partial" when extraction partially succeeds
 - [ ] `survey.extraction_run_id` is populated for debugging
-- [ ] `survey.extraction_metadata` contains LLM metrics
+- [ ] `survey.extraction_metadata` contains LLM metrics (llm_time_ms, total_llm_calls, tokens)
 - [ ] On extraction failure, survey is still created (allows manual entry fallback)
 - [ ] `survey.question_count` is updated after extraction
 
@@ -237,36 +267,44 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 - [ ] LLM timeout results in retry (up to `config.max_retries`)
 - [ ] After max retries, `extraction_status` is set to "failed"
 - [ ] Partial extraction saves extracted questions, marks survey as "partial"
+- [ ] Per-sheet failure is isolated (other sheets still contribute questions)
+- [ ] Incomplete XML is recovered by appending `</questions>` closing tag
 - [ ] Invalid Excel format returns validation error before extraction starts
 - [ ] All errors are logged with survey_id, tenant_id, extraction_run_id
 - [ ] Bedrock client errors are caught and logged appropriately
 
 ### Observability
 
-- [ ] Extraction duration logged (total and per-step)
-- [ ] LLM call count logged
+- [ ] Extraction duration logged (total and per-sheet)
+- [ ] LLM call count logged (per-sheet granularity)
 - [ ] Questions extracted count logged
-- [ ] Model ID used logged
+- [ ] Model ID and approach used logged
+- [ ] Checkbox preprocessing duration logged (when applicable)
 - [ ] Errors logged with structured context
 - [ ] Metrics emitted (if metrics system available)
 
 ### Testing
 
-- [ ] Unit tests for `ExtractionPipelineConfig` validation
-- [ ] Unit tests for GUID generation in normalization
-- [ ] Unit tests for dependency resolution
-- [ ] Unit tests for XML parsing edge cases
+- [ ] Unit tests for `ExtractionConfig` validation and defaults
+- [ ] Unit tests for `CheckboxPreprocessor` (VML extraction, temp file management)
+- [ ] Unit tests for `MarkdownConverter` (MarkItDown + NaN cleanup + CSV)
+- [ ] Unit tests for per-sheet splitting (regex, single-sheet fallback)
+- [ ] Unit tests for GUID generation in normalization (two-pass)
+- [ ] Unit tests for dependency resolution (seq-to-GUID mapping)
+- [ ] Unit tests for XML parsing edge cases (truncated, missing tags, unknown types)
 - [ ] Unit tests for question type mapping
 - [ ] Integration test for full extraction pipeline (with mock Bedrock)
+- [ ] Integration test for checkbox preprocessing with real Excel files
 - [ ] Integration test for feature flag ON/OFF behavior
 - [ ] Integration test for review workflow (approve/reject)
 - [ ] Integration test for multi-sheet Excel handling
+- [ ] Integration test for strategy selection (config.approach = "auto")
 - [ ] Test coverage >= 80% for new code
 
 ### Documentation
 
-- [ ] `APPROACH_4.md` updated with GUID documentation
-- [ ] `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` created
+- [ ] `APPROACH_1.md` created with full pipeline documentation
+- [ ] `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` updated for Approach 1
 - [ ] API endpoint documentation updated
 - [ ] Feature flag documented in LaunchDarkly
 
@@ -277,8 +315,9 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 ### 1. Infrastructure Setup
 
 - [ ] Register feature flag `survey_llm_question_extraction` in LaunchDarkly
-- [ ] Create `config/extraction_config.py` with Pydantic settings
+- [ ] Create `config/extraction_config.py` with simplified Approach 1 Pydantic config
 - [ ] Set up environment variables for local development
+- [ ] Define `ExtractionStrategy` protocol
 
 ### 2. Database Layer
 
@@ -305,22 +344,39 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 - [ ] Create `QuestionDependencyRepository`
 - [ ] Create `QuestionConditionalInputRepository`
 - [ ] Update `QuestionRepository` for new fields
-- [ ] Update `SurveyRepository` for new fields
+- [ ] Update `SurveyRepository` for new fields (including `update_extraction_status`)
 - [ ] Create repository unit tests
 
-### 5. Service Layer
+### 5. Shared Components
 
-- [ ] Port `approach_pipeline.py` to `QuestionExtractionService`
-- [ ] Adapt for production Bedrock client
+- [ ] Create `CheckboxPreprocessor` service (port from `checkbox_label_poc.py`)
+  - [ ] Generalize to all sheets (remove hardcoded sheet name)
+  - [ ] Generalize to all rows (remove hardcoded row range)
+  - [ ] Add temp file management
+  - [ ] Add unit tests
+- [ ] Create `MarkdownConverter` service (wraps MarkItDown + NaN cleanup)
+- [ ] Create `XmlResponseParser` service (XML parsing + GUID generation + dependency resolution)
+- [ ] Create `QuestionPersister` service (bulk DB writes)
+
+### 6. Extraction Strategy
+
+- [ ] Port `approach_auto.py` to `AutoExtractionStrategy`
+- [ ] Adapt for production Bedrock client (with inference profile support)
 - [ ] Implement config-driven model selection
-- [ ] Implement inference profile support
-- [ ] Add structured logging
-- [ ] Add error handling and retries
+- [ ] Add structured logging with survey_id, tenant_id, run_id
+- [ ] Add per-sheet error handling and retry logic
+- [ ] Create strategy unit tests
+
+### 7. Orchestrator
+
+- [ ] Create `ExtractionOrchestrator`
+- [ ] Implement preprocessing + strategy + persistence coordination
+- [ ] Implement strategy selection based on `config.approach`
 - [ ] Implement `approve_questions` method
 - [ ] Implement `reject_questions` method
-- [ ] Create service unit tests
+- [ ] Create orchestrator integration tests
 
-### 6. API Layer
+### 8. API Layer
 
 - [ ] Integrate extraction into survey upload endpoint
 - [ ] Create `GET /extraction/status` endpoint
@@ -331,18 +387,18 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 - [ ] Update `GET /questions` to include related entities
 - [ ] Create API integration tests
 
-### 7. Testing and QA
+### 9. Testing and QA
 
 - [ ] Write unit tests (target 80% coverage)
 - [ ] Write integration tests
-- [ ] Manual testing with various Excel formats
-- [ ] Performance testing with large files
-- [ ] Error scenario testing
+- [ ] Manual testing with various Excel formats (including checkbox-based surveys)
+- [ ] Performance testing with large files (500+ questions, 20+ sheets)
+- [ ] Error scenario testing (malformed Excel, LLM failures, Bedrock timeouts)
 
-### 8. Documentation
+### 10. Documentation
 
-- [ ] Update APPROACH_4.md (completed in POC)
-- [ ] Create implementation plan document
+- [ ] Create `APPROACH_1.md` with pipeline documentation
+- [ ] Update `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for Approach 1
 - [ ] Update API documentation
 - [ ] Document feature flag in LaunchDarkly
 
@@ -353,8 +409,9 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 - AWS Bedrock access with Claude Sonnet 4.5 model
 - LaunchDarkly feature flag service
 - Python libraries:
-  - `openpyxl` - Excel parsing
-  - `beautifulsoup4` - XML parsing
+  - `markitdown` - Excel to Markdown conversion
+  - `openpyxl` - Excel parsing (metadata, filtered markdown)
+  - `beautifulsoup4` - XML response parsing
   - `pydantic-settings` - Configuration management
 
 ---
@@ -363,10 +420,35 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| LLM produces inaccurate extractions | Medium | Medium | Review workflow, confidence scores, human validation |
-| Bedrock latency causes timeouts | Low | Medium | Configurable timeout, retry logic |
-| Large files exceed token limits | Low | Low | Sheet-based batching already implemented |
+| LLM produces inaccurate extractions | Medium | Medium | Review workflow, human validation, upgrade path to Approach 4 |
+| Bedrock latency causes timeouts | Low | Medium | Configurable timeout, retry logic, per-sheet isolation |
+| Large files exceed token limits | Low | Low | Per-sheet splitting prevents output truncation |
+| Checkbox labels not extracted | Medium | Low | VML preprocessing + fallback to raw TRUE/FALSE values |
 | Migration breaks existing data | Low | High | Reversible migrations, staging testing |
+
+---
+
+## Future Extension: Approach 4
+
+If extraction accuracy needs improvement for specific file formats, the architecture supports upgrading to Approach 4 (Multi-Step Pipeline) with minimal changes:
+
+**What to add:**
+- `PipelineExtractionStrategy` class implementing `ExtractionStrategy` protocol
+- Per-step model configs (`step1_structure_analysis`, `step2_coverage_validation`, `step3_question_extraction`)
+- `ExcelMetadataService` for pandas-based column metadata
+- `FilteredMarkdownGenerator` for column-filtered tables
+
+**What to change:**
+- Config: Set `approach: "pipeline"`
+- Orchestrator: Register the new strategy
+
+**What stays the same:**
+- Database schema (all fields already supported)
+- API endpoints (same request/response shapes)
+- Feature flag, review workflow, observability
+- Shared components (CheckboxPreprocessor, XmlResponseParser, QuestionPersister)
+
+See `backend/app/services/APPROACH_4.md` for detailed Approach 4 documentation.
 
 ---
 
@@ -387,5 +469,7 @@ See `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` for full technical details.
 ## Related Documents
 
 - `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` - Full technical implementation plan
-- `backend/app/services/APPROACH_4.md` - Pipeline documentation
-- `backend/app/services/approach_pipeline.py` - POC implementation reference
+- `backend/app/services/APPROACH_1.md` - Approach 1 detailed pipeline documentation
+- `backend/app/services/APPROACH_4.md` - Approach 4 pipeline documentation (future reference)
+- `backend/app/services/approach_auto.py` - POC Approach 1 implementation reference
+- `backend/checkbox_label_poc.py` - POC checkbox preprocessing reference
