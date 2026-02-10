@@ -84,19 +84,20 @@ See `backend/app/services/APPROACH_1.md` for detailed Approach 1 pipeline docume
 
 ## Acceptance Criteria
 
-### Feature Flag
+### Feature Flag (sub-ticket: [`TICKET_FEATURE_FLAG.md`](TICKET_FEATURE_FLAG.md))
 
 - [ ] Feature flag `survey_llm_question_extraction` is registered in LaunchDarkly
 - [ ] Flag is linked to this Jira ticket in LaunchDarkly
 - [ ] Flag can be toggled per-tenant
 - [ ] When disabled, upload flow works as before (manual question entry)
 - [ ] Flag is tagged with: `survey`, `llm`, `backend`
+- [ ] Frontend flag endpoint investigated and documented
 
-### Configuration
+### Configuration (sub-ticket: [`TICKET_EXTRACTION_CONFIG.md`](TICKET_EXTRACTION_CONFIG.md))
 
-- [ ] Pydantic config file `extraction_config.py` exists
-- [ ] Config supports extraction model configuration:
-  - [ ] `extraction` with model_id, inference_profile_arn, max_output_tokens, temperature
+- [ ] Single merged `ExtractionConfig` Pydantic settings class exists
+- [ ] Config supports model configuration as flat fields:
+  - [ ] `model_id`, `inference_profile_arn`, `max_output_tokens`, `temperature`
 - [ ] Config supports approach selection:
   - [ ] `approach` field with values `"auto"` (Approach 1) and `"pipeline"` (Approach 4, future)
   - [ ] Default: `"auto"`
@@ -110,7 +111,7 @@ See `backend/app/services/APPROACH_1.md` for detailed Approach 1 pipeline docume
   - [ ] `save_intermediate_results` (bool)
 - [ ] Config can be overridden via environment variables with `EXTRACTION_` prefix
 
-### Database
+### Database (sub-ticket: [`TICKET_DB_MIGRATION_AND_MODELS.md`](TICKET_DB_MIGRATION_AND_MODELS.md))
 
 - [ ] Migration creates `question_type_enum` PostgreSQL enum type
 - [ ] Migration creates `question_options` table with columns:
@@ -151,7 +152,7 @@ See `backend/app/services/APPROACH_1.md` for detailed Approach 1 pipeline docume
 - [ ] Migrations include appropriate indexes for foreign keys
 - [ ] Schema is forward-compatible with Approach 4 (no changes needed on upgrade)
 
-### Models
+### Models (sub-ticket: [`TICKET_DB_MIGRATION_AND_MODELS.md`](TICKET_DB_MIGRATION_AND_MODELS.md))
 
 - [ ] `QuestionOption` POPO model created with all fields
 - [ ] `QuestionDependency` POPO model created with all fields
@@ -312,31 +313,20 @@ See `backend/app/services/APPROACH_1.md` for detailed Approach 1 pipeline docume
 
 ## Implementation Tasks
 
-### 1. Infrastructure Setup
+### Parallelizable Sub-tickets (Phase 0)
 
-- [ ] Register feature flag `survey_llm_question_extraction` in LaunchDarkly
-- [ ] Create `config/extraction_config.py` with simplified Approach 1 Pydantic config
+The following three tasks have been split into independent sub-tickets that can be worked on in parallel by different developers:
+
+| Sub-ticket | Description | File |
+|------------|-------------|------|
+| **Database Migration + Models** | Alembic migrations (6 migrations) and Python model classes (QuestionType enum, QuestionOption, QuestionDependency, QuestionConditionalInput, updated Question/Survey) | [`TICKET_DB_MIGRATION_AND_MODELS.md`](TICKET_DB_MIGRATION_AND_MODELS.md) |
+| **Feature Flag** | Register `survey_llm_question_extraction` in LaunchDarkly, verify frontend flag endpoint | [`TICKET_FEATURE_FLAG.md`](TICKET_FEATURE_FLAG.md) |
+| **Extraction Configuration** | Create merged `ExtractionConfig` Pydantic settings class with env var overrides | [`TICKET_EXTRACTION_CONFIG.md`](TICKET_EXTRACTION_CONFIG.md) |
+
+### 1. Infrastructure Setup (remaining after Phase 0)
+
 - [ ] Set up environment variables for local development
 - [ ] Define `ExtractionStrategy` protocol
-
-### 2. Database Layer
-
-- [ ] Write migration: `add_question_type_enum`
-- [ ] Write migration: `create_question_options_table`
-- [ ] Write migration: `create_question_dependencies_table`
-- [ ] Write migration: `create_question_conditional_inputs_table`
-- [ ] Write migration: `alter_questions_add_extraction_fields`
-- [ ] Write migration: `alter_surveys_add_extraction_fields`
-- [ ] Run migrations in dev/staging environments
-
-### 3. Model Layer
-
-- [ ] Create `QuestionOption` POPO model
-- [ ] Create `QuestionDependency` POPO model
-- [ ] Create `QuestionConditionalInput` POPO model
-- [ ] Update `Question` model with new fields
-- [ ] Update `Survey` model with new fields
-- [ ] Create/update model unit tests
 
 ### 4. Repository Layer
 
@@ -473,3 +463,9 @@ See `backend/app/services/APPROACH_4.md` for detailed Approach 4 documentation.
 - `backend/app/services/APPROACH_4.md` - Approach 4 pipeline documentation (future reference)
 - `backend/app/services/approach_auto.py` - POC Approach 1 implementation reference
 - `backend/checkbox_label_poc.py` - POC checkbox preprocessing reference
+
+### Sub-tickets (Parallelizable)
+
+- `TICKET_DB_MIGRATION_AND_MODELS.md` - Database migrations and model classes
+- `TICKET_FEATURE_FLAG.md` - Feature flag registration and frontend endpoint investigation
+- `TICKET_EXTRACTION_CONFIG.md` - Extraction configuration Pydantic settings class

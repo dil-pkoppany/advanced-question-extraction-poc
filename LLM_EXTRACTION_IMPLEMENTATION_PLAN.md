@@ -132,62 +132,39 @@ Following the workspace naming convention (`{scope}_{feature}`):
 
 ## Pydantic Configuration
 
-Create a dedicated configuration file for the extraction service. The initial implementation uses a single model configuration (Approach 1). The `StepModelConfig` class is included for forward-compatibility with Approach 4 but is not used in the initial release.
+> **Ticket**: See `TICKET_EXTRACTION_CONFIG.md` for the implementation ticket.
+
+Create a single merged `ExtractionConfig` settings class for the extraction service. Model-level fields (model_id, temperature, etc.) are flattened directly into the main config rather than nested in a separate class. This simplifies environment variable overrides (e.g., `EXTRACTION_MODEL_ID=...` instead of requiring nested config).
 
 ```python
 # config/extraction_config.py
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import Literal, Optional
 
 
-class StepModelConfig(BaseModel):
-    """Configuration for a single LLM pipeline step.
-    
-    Used by Approach 1 as a single extraction config.
-    Reserved for Approach 4 per-step configs (structure, validation, extraction).
-    """
-    
-    model_id: str = Field(
-        description="Bedrock model ID (e.g., anthropic.claude-sonnet-4-5-20250929-v1:0)"
-    )
-    inference_profile_arn: Optional[str] = Field(
-        default=None,
-        description="Optional inference profile ARN for cost/performance optimization"
-    )
-    max_output_tokens: int = Field(
-        description="Maximum tokens in LLM response"
-    )
-    temperature: float = Field(
-        default=0.1,
-        ge=0.0,
-        le=1.0,
-        description="LLM temperature (0.0 = deterministic, 1.0 = creative)"
-    )
-
-
 class ExtractionConfig(BaseSettings):
     """
-    Configuration for the question extraction pipeline.
+    Configuration for the LLM question extraction pipeline.
     
-    Environment variables override defaults with prefix EXTRACTION_.
-    Example: EXTRACTION_ENABLED=true
+    All fields can be overridden via environment variables with EXTRACTION_ prefix.
+    Example: EXTRACTION_ENABLED=true, EXTRACTION_MODEL_ID=anthropic.claude-sonnet-4-5-20250929-v1:0
     """
     
     model_config = {"env_prefix": "EXTRACTION_"}
     
-    # Feature toggle
+    # --- Feature toggle ---
     enabled: bool = Field(
         default=False,
         description="Master switch for LLM extraction feature"
     )
     require_review: bool = Field(
         default=True,
-        description="Whether extracted questions require human review"
+        description="Whether extracted questions require human review before approval"
     )
     
-    # Approach selection (extensibility point)
+    # --- Approach selection ---
     approach: Literal["auto", "pipeline"] = Field(
         default="auto",
         description=(
@@ -197,17 +174,27 @@ class ExtractionConfig(BaseSettings):
         )
     )
     
-    # Extraction model config (Approach 1 uses this single config)
-    extraction: StepModelConfig = Field(
-        default_factory=lambda: StepModelConfig(
-            model_id="anthropic.claude-sonnet-4-5-20250929-v1:0",
-            max_output_tokens=32768,
-            temperature=0.1
-        ),
-        description="Model config for question extraction (Approach 1)"
+    # --- Model configuration (Approach 1 uses these directly) ---
+    model_id: str = Field(
+        default="anthropic.claude-sonnet-4-5-20250929-v1:0",
+        description="Bedrock model ID for question extraction"
+    )
+    inference_profile_arn: Optional[str] = Field(
+        default=None,
+        description="Optional inference profile ARN for cost/performance optimization"
+    )
+    max_output_tokens: int = Field(
+        default=32768,
+        description="Maximum tokens in LLM response"
+    )
+    temperature: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="LLM temperature (0.0 = deterministic, 1.0 = creative)"
     )
     
-    # Preprocessing
+    # --- Preprocessing ---
     checkbox_preprocessing_enabled: bool = Field(
         default=True,
         description=(
@@ -217,18 +204,25 @@ class ExtractionConfig(BaseSettings):
     )
     
     # --- Reserved for Approach 4 (not used in initial implementation) ---
-    # step1_structure_analysis: StepModelConfig (structure column detection)
-    # step2_coverage_validation: StepModelConfig (validation)
-    # step3_question_extraction: StepModelConfig (filtered extraction)
+    # When upgrading to Approach 4, add per-step model configs here:
+    # step1_model_id: str (structure analysis model)
+    # step1_max_output_tokens: int
+    # step1_temperature: float
+    # step2_model_id: str (coverage validation model)
+    # step2_max_output_tokens: int
+    # step2_temperature: float
+    # step3_model_id: str (question extraction model)
+    # step3_max_output_tokens: int
+    # step3_temperature: float
     
-    # Global settings
+    # --- Global settings ---
     extraction_timeout_seconds: int = Field(
         default=300,
-        description="Maximum time for entire extraction pipeline"
+        description="Maximum time for entire extraction pipeline in seconds"
     )
     max_retries: int = Field(
         default=3,
-        description="Number of retries on LLM failure"
+        description="Number of retries on LLM failure per sheet"
     )
     save_intermediate_results: bool = Field(
         default=True,
@@ -236,7 +230,7 @@ class ExtractionConfig(BaseSettings):
     )
     intermediate_results_bucket: Optional[str] = Field(
         default=None,
-        description="S3 bucket for intermediate results (optional)"
+        description="S3 bucket for intermediate results (optional, local if not set)"
     )
 
 
@@ -251,13 +245,12 @@ from config.extraction_config import extraction_config
 
 class AutoExtractionStrategy:
     async def extract(self, file_path: str, run_id: str | None = None) -> ExtractionResult:
-        config = extraction_config.extraction
         response = await self._invoke_llm(
             prompt=self._build_prompt(sheet_content, sheet_name),
-            model_id=config.model_id,
-            max_tokens=config.max_output_tokens,
-            temperature=config.temperature,
-            inference_profile_arn=config.inference_profile_arn
+            model_id=extraction_config.model_id,
+            max_tokens=extraction_config.max_output_tokens,
+            temperature=extraction_config.temperature,
+            inference_profile_arn=extraction_config.inference_profile_arn,
         )
         return self._parse_response(response)
 ```
@@ -713,10 +706,18 @@ logger.info(
 
 ## Implementation Order
 
-1. **Feature Flag** - Register `survey_llm_question_extraction` in LaunchDarkly
-2. **Pydantic Config** - Create `extraction_config.py` with simplified Approach 1 config
-3. **Database Migrations** - All 6 migrations (forward-compatible with both approaches)
-4. **Models** - QuestionOption, QuestionDependency, QuestionConditionalInput
+### Phase 0: Parallelizable Foundation (can be worked on simultaneously)
+
+These three items have no dependencies on each other and can be developed in parallel by different developers:
+
+| Ticket | Description | File |
+|--------|-------------|------|
+| Database Migration + Models | Alembic migrations and Python model classes | `TICKET_DB_MIGRATION_AND_MODELS.md` |
+| Feature Flag | LaunchDarkly flag registration and frontend endpoint investigation | `TICKET_FEATURE_FLAG.md` |
+| Extraction Configuration | Merged `ExtractionConfig` Pydantic settings class | `TICKET_EXTRACTION_CONFIG.md` |
+
+### Phase 1: Sequential Implementation (depends on Phase 0)
+
 5. **Repositories** - CRUD for new models + bulk insert methods
 6. **Checkbox Preprocessor** - Port `checkbox_label_poc.py` to production service
 7. **Shared Components** - MarkdownConverter, XmlResponseParser, QuestionPersister
