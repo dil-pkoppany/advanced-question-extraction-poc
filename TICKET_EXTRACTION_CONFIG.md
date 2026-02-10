@@ -27,9 +27,7 @@ LLM Question Extraction (see `JIRA_LLM_QUESTION_EXTRACTION.md`)
 
 ## Description
 
-Create a Pydantic settings class that centralizes the technical configuration for the LLM question extraction pipeline. This `ExtractionConfig` class contains the approach selection, model-level configuration (model ID, tokens, temperature), preprocessing toggles, and operational settings (timeouts, retries). Feature toggles (`enabled`, `require_review`) are managed separately via AppSettings and the LaunchDarkly feature flag.
-
-The config follows the existing pattern from `backend/app/config.py` (uses `pydantic_settings.BaseSettings` with environment variable overrides).
+Create a Pydantic settings class that centralizes the technical configuration for the LLM question extraction pipeline. This `ExtractionConfig` class contains the approach selection, model-level configuration (model ID, tokens, temperature), preprocessing toggles, and operational settings (timeouts, retries).
 
 ### Config Class Design
 
