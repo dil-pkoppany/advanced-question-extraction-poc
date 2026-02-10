@@ -8,6 +8,16 @@ The feature automatically extracts questions, answer options, help text, conditi
 
 See [APPROACH_1.md](backend/app/services/APPROACH_1.md) for detailed technical documentation of the extraction pipeline.
 
+### Architecture Decision
+
+The extraction (and future auto-answering) pipeline runs as a **backend API background task** on the long-lived server process. The API returns a 202 immediately and the frontend polls for status. This approach was chosen over Lambda fan-out for simplicity, debuggability, and direct reuse of existing services. Bedrock rate limits require throttling in both approaches, reducing Lambda's speed advantage.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture documentation, including:
+- Two-phase pipeline (extraction + auto-answering)
+- Answering strategy (1 question = 1 `retrieve_and_generate` call, with dependency context)
+- Parallel processing with `asyncio.Semaphore` throttling
+- Lambda alternative (deferred)
+
 ---
 
 ## Current State
@@ -69,6 +79,11 @@ erDiagram
         jsonb extraction_metadata
         string extraction_run_id
         boolean require_extraction_review
+        string answering_status
+        timestamp extraction_started_at
+        timestamp answering_started_at
+        string extraction_error
+        string answering_error
     }
     
     Question {
@@ -430,34 +445,19 @@ class ExtractionOrchestrator:
         await self.survey_repo.update_extraction_status(
             survey_id, "in_progress", tenant_id
         )
+        await self.survey_repo.set_extraction_started_at(
+            survey_id, datetime.utcnow(), tenant_id
+        )
         
         try:
-            # Step 0: Preprocess
-            preprocessed_path = file_path
-            if self.config.checkbox_preprocessing_enabled:
-                preprocessed_path = self.preprocessor.preprocess(file_path)
-            
-            # Select strategy
-            strategy = self._strategies[self.config.approach]
-            
-            # Run extraction
-            result = await strategy.extract(
-                preprocessed_path,
-                run_id=f"run_{survey_id}",
-                tenant_id=tenant_id,
+            # Wrap in timeout to prevent hanging
+            result = await asyncio.wait_for(
+                self._run_extraction(file_path, survey_id, tenant_id),
+                timeout=self.config.extraction_timeout_seconds,
             )
             
-            # Persist results
-            if result.success and result.questions:
-                await self.persister.persist(
-                    survey_id=survey_id,
-                    questions=result.questions,
-                    tenant_id=tenant_id,
-                    require_review=self.config.require_review,
-                )
-            
             # Update status
-            status = "completed" if result.success else "failed"
+            status = "completed" if result.success else "partial" if result.questions else "failed"
             await self.survey_repo.update_extraction_status(
                 survey_id, status, tenant_id,
                 metadata=result.metrics.model_dump() if result.metrics else None,
@@ -465,11 +465,57 @@ class ExtractionOrchestrator:
             
             return result
             
-        except Exception as e:
+        except asyncio.TimeoutError:
+            logger.error("Extraction timed out", extra={
+                "survey_id": survey_id,
+                "timeout_seconds": self.config.extraction_timeout_seconds,
+            })
             await self.survey_repo.update_extraction_status(
-                survey_id, "failed", tenant_id
+                survey_id, "failed", tenant_id,
+                error=f"Extraction timed out after {self.config.extraction_timeout_seconds}s",
             )
-            raise
+            return None
+            
+        except Exception as e:
+            logger.error("Extraction failed", extra={
+                "survey_id": survey_id, "error": str(e),
+            })
+            await self.survey_repo.update_extraction_status(
+                survey_id, "failed", tenant_id,
+                error=str(e),
+            )
+            # Do NOT re-raise: the background task must set a terminal status, not crash
+            return None
+    
+    async def _run_extraction(
+        self, file_path: str, survey_id: str, tenant_id: str
+    ) -> ExtractionResult:
+        """Inner extraction logic, wrapped by timeout and error handling."""
+        # Step 0: Preprocess
+        preprocessed_path = file_path
+        if self.config.checkbox_preprocessing_enabled:
+            preprocessed_path = self.preprocessor.preprocess(file_path)
+        
+        # Select strategy
+        strategy = self._strategies[self.config.approach]
+        
+        # Run extraction
+        result = await strategy.extract(
+            preprocessed_path,
+            run_id=f"run_{survey_id}",
+            tenant_id=tenant_id,
+        )
+        
+        # Persist results
+        if result.success and result.questions:
+            await self.persister.persist(
+                survey_id=survey_id,
+                questions=result.questions,
+                tenant_id=tenant_id,
+                require_review=self.config.require_review,
+            )
+        
+        return result
     
     async def approve_questions(
         self,
@@ -617,10 +663,15 @@ Add fields to existing Survey:
 
 ```python
 # New fields for Survey model
-extraction_status: str = "not_started"       # "not_started", "in_progress", "completed", "failed", "partial"
-extraction_metadata: Optional[dict] = None   # LLM metrics, timestamps, model used
-extraction_run_id: Optional[str] = None      # UUID for debugging/traceability
-require_extraction_review: bool = True       # Configurable per survey
+extraction_status: str = "not_started"                    # "not_started", "in_progress", "completed", "failed", "partial"
+extraction_metadata: Optional[dict] = None                # LLM metrics, timestamps, model used
+extraction_run_id: Optional[str] = None                   # UUID for debugging/traceability
+require_extraction_review: bool = True                    # Configurable per survey
+answering_status: str = "not_started"                     # "not_started", "in_progress", "completed", "failed", "partial"
+extraction_started_at: Optional[datetime] = None          # When extraction began; for stale job recovery + frontend timeout
+answering_started_at: Optional[datetime] = None           # When answering began; same purpose
+extraction_error: Optional[str] = None                    # Human-readable error for frontend display
+answering_error: Optional[str] = None                     # Human-readable error for frontend display
 ```
 
 ---
@@ -649,6 +700,10 @@ require_extraction_review: bool = True       # Configurable per survey
 
 ## Error Handling
 
+> See [ARCHITECTURE.md](ARCHITECTURE.md) for the full multi-layer error handling strategy (try/catch, timeouts, stale job recovery, frontend polling timeout).
+
+### Per-Scenario Handling
+
 | Scenario | Handling |
 |----------|----------|
 | LLM timeout | Retry up to `config.max_retries` times, then mark as "failed" |
@@ -659,6 +714,15 @@ require_extraction_review: bool = True       # Configurable per survey
 | Feature flag off | Skip extraction, allow manual entry |
 | Bedrock unavailable | Log error, mark as "failed", allow manual retry |
 | No VML checkboxes | Preprocessing is a no-op; pipeline continues normally |
+| Unhandled exception | Top-level try/catch sets status to "failed" with error message; never leaves job in "in_progress" |
+| Pipeline timeout | `asyncio.wait_for` enforces max duration; sets status to "failed" on timeout |
+| Server crash/restart | Startup recovery routine detects stale `in_progress` jobs and marks them "failed" |
+
+### Guarantees
+
+- **No job is ever permanently stuck in `in_progress`**: every code path terminates in a `completed`, `partial`, or `failed` status
+- **Frontend always gets a terminal signal**: the status endpoint returns `extraction_error`/`answering_error` messages for display, and `started_at` timestamps for client-side timeout enforcement
+- **Manual retry is always available**: `POST /surveys/{survey_id}/extraction/retry` resets status and re-triggers the pipeline
 
 ---
 
@@ -719,9 +783,19 @@ These three items have no dependencies on each other and can be developed in par
 6. **Checkbox Preprocessor** - Port `checkbox_label_poc.py` to production service
 7. **Shared Components** - MarkdownConverter, XmlResponseParser, QuestionPersister
 8. **Auto Extraction Strategy** - Port `approach_auto.py` using shared components
-9. **Orchestrator** - ExtractionOrchestrator with strategy selection
-10. **API Integration** - Upload flow + review endpoints
+9. **Orchestrator** - ExtractionOrchestrator with strategy selection and background task management
+10. **API Integration** - Upload flow + review endpoints + status polling endpoint
 11. **Testing** - Unit + integration tests
+
+### Phase 2: Auto-Answering (depends on Phase 1)
+
+> See [ARCHITECTURE.md](ARCHITECTURE.md) for full architecture details.
+
+12. **Answering Orchestrator** - Iterate extracted questions, build prompts with dependency context, call `retrieve_and_generate` per question with `asyncio.Semaphore` throttling
+13. **Prompt Builder** - Enrich dependent question prompts with parent question text for better RAG retrieval
+14. **Pipeline Integration** - Wire answering into the background task after extraction completes (gated by `auto_answer_enabled` flag)
+15. **Status Tracking** - Use `survey.answering_status` for progress; extend polling endpoint to report answering progress
+16. **Testing** - Unit tests for prompt building, integration tests for end-to-end pipeline
 
 ---
 
@@ -812,19 +886,30 @@ When accuracy requirements demand upgrading to Approach 4, the following changes
 
 ## Rollout Plan
 
-1. **Phase 1: Internal Testing**
+1. **Phase 1: Internal Testing (Extraction Only)**
    - Enable for internal tenant only
    - Require review for all extractions
    - Monitor error rates and accuracy
    - Validate checkbox preprocessing on real survey files
 
-2. **Phase 2: Beta**
+2. **Phase 2: Beta (Extraction)**
    - Enable for select beta tenants
    - Gather feedback on extraction quality
    - Tune model parameters if needed
    - Evaluate whether Approach 4 is needed for specific file formats
 
-3. **Phase 3: GA**
+3. **Phase 3: GA (Extraction)**
    - Enable for all tenants (opt-in)
    - Make review configurable per tenant
    - Document in user guides
+
+4. **Phase 4: Auto-Answering (Internal Testing)**
+   - Enable auto-answering for internal tenant only (behind separate flag/config)
+   - Validate answer quality against existing manually created answers
+   - Monitor Bedrock RAG call metrics, latency, and costs
+   - Verify 1:1 question-to-answer mapping in review UI
+
+5. **Phase 5: Auto-Answering (Beta + GA)**
+   - Enable for beta tenants, then gradual rollout
+   - Users review AI-generated answers alongside extracted questions
+   - Monitor `ai_no_data_response` rates to identify knowledge base gaps

@@ -71,6 +71,11 @@ erDiagram
         jsonb extraction_metadata
         string extraction_run_id
         boolean require_extraction_review
+        string answering_status
+        timestamp extraction_started_at
+        timestamp answering_started_at
+        string extraction_error
+        string answering_error
     }
 
     Question {
@@ -148,6 +153,11 @@ erDiagram
   - `extraction_metadata` (JSONB, nullable)
   - `extraction_run_id` (UUID, nullable)
   - `require_extraction_review` (BOOL, default `true`)
+  - `answering_status` (TEXT, default `'not_started'`) -- for future auto-answering phase
+  - `extraction_started_at` (TIMESTAMP, nullable) -- when extraction started; used for stale job recovery and frontend timeout
+  - `answering_started_at` (TIMESTAMP, nullable) -- when answering started; same purpose
+  - `extraction_error` (TEXT, nullable) -- human-readable error message for frontend display
+  - `answering_error` (TEXT, nullable) -- human-readable error message for frontend display
 - [ ] All migrations are reversible (down migrations work correctly)
 - [ ] Foreign key columns have appropriate indexes
 - [ ] Schema is forward-compatible with Approach 4 (no changes will be needed on upgrade)
@@ -159,7 +169,7 @@ erDiagram
 - [ ] `QuestionDependency` model created with fields: `dependency_id`, `question_id`, `depends_on_question_id`, `depends_on_answer_value`, `condition_type`, `dependency_action`
 - [ ] `QuestionConditionalInput` model created with fields: `conditional_id`, `question_id`, `trigger_answer_value`, `input_prompt`
 - [ ] `Question` model updated with new fields: `help_text`, `source_row_index`, `source_sheet_name`, `extraction_confidence`, `extraction_status`
-- [ ] `Survey` model updated with new fields: `extraction_status`, `extraction_metadata`, `extraction_run_id`, `require_extraction_review`
+- [ ] `Survey` model updated with new fields: `extraction_status`, `extraction_metadata`, `extraction_run_id`, `require_extraction_review`, `answering_status`, `extraction_started_at`, `answering_started_at`, `extraction_error`, `answering_error`
 - [ ] Unit tests for model creation and field validation
 
 ### Out of Scope
@@ -192,6 +202,9 @@ erDiagram
 - The `question_type_enum` replaces the current generic string `question_type` on the `questions` table
 - `extraction_status` on questions uses string values: `pending_review`, `approved`, `rejected`
 - `extraction_status` on surveys uses string values: `not_started`, `in_progress`, `completed`, `failed`, `partial`
+- `answering_status` on surveys uses the same string values as `extraction_status` (added now to avoid a future migration when auto-answering is implemented)
+- `extraction_started_at` and `answering_started_at` are set when the respective phase begins; used by stale job recovery (server restart detection) and by the frontend to calculate elapsed time and enforce polling timeout
+- `extraction_error` and `answering_error` store human-readable error messages set by the top-level try/catch or timeout handler; displayed to the user in the frontend when status is `failed`
 - All UUID primary keys should use `uuid_generate_v4()` as default
 
 ---
@@ -200,4 +213,5 @@ erDiagram
 
 - `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` — Full implementation plan (see Database Migrations and New Database Models sections)
 - `JIRA_LLM_QUESTION_EXTRACTION.md` — Parent Jira ticket
+- `ARCHITECTURE.md` — Architecture decision (API background task + future auto-answering)
 - `backend/app/services/APPROACH_1.md` — Approach 1 pipeline documentation

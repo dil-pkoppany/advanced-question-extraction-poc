@@ -145,6 +145,11 @@ See `backend/app/services/APPROACH_1.md` for detailed Approach 1 pipeline docume
   - `extraction_metadata` (JSONB, nullable)
   - `extraction_run_id` (UUID, nullable)
   - `require_extraction_review` (BOOL, default true)
+  - `answering_status` (TEXT, default 'not_started') -- for future auto-answering phase
+  - `extraction_started_at` (TIMESTAMP, nullable) -- for stale job recovery and frontend timeout
+  - `answering_started_at` (TIMESTAMP, nullable) -- same purpose
+  - `extraction_error` (TEXT, nullable) -- human-readable error message for frontend
+  - `answering_error` (TEXT, nullable) -- human-readable error message for frontend
 - [ ] All migrations are reversible (down migrations work)
 - [ ] Migrations include appropriate indexes for foreign keys
 - [ ] Schema is forward-compatible with Approach 4 (no changes needed on upgrade)
@@ -456,6 +461,7 @@ See `backend/app/services/APPROACH_4.md` for detailed Approach 4 documentation.
 ## Related Documents
 
 - `LLM_EXTRACTION_IMPLEMENTATION_PLAN.md` - Full technical implementation plan
+- `ARCHITECTURE.md` - Architecture decision (API background task, two-phase pipeline, auto-answering strategy)
 - `backend/app/services/APPROACH_1.md` - Approach 1 detailed pipeline documentation
 - `backend/app/services/APPROACH_4.md` - Approach 4 pipeline documentation (future reference)
 - `backend/app/services/approach_auto.py` - POC Approach 1 implementation reference
