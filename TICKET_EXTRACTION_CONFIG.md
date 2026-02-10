@@ -27,7 +27,7 @@ LLM Question Extraction (see `JIRA_LLM_QUESTION_EXTRACTION.md`)
 
 ## Description
 
-Create a Pydantic settings class that centralizes all configuration for the LLM question extraction pipeline. This is a single merged `ExtractionConfig` class that contains both the global extraction settings and the model-level configuration (model ID, tokens, temperature) flattened into one class.
+Create a Pydantic settings class that centralizes the technical configuration for the LLM question extraction pipeline. This `ExtractionConfig` class contains the approach selection, model-level configuration (model ID, tokens, temperature), preprocessing toggles, and operational settings (timeouts, retries). Feature toggles (`enabled`, `require_review`) are managed separately via AppSettings and the LaunchDarkly feature flag.
 
 The config follows the existing pattern from `backend/app/config.py` (uses `pydantic_settings.BaseSettings` with environment variable overrides).
 
@@ -48,20 +48,13 @@ class ExtractionConfig(BaseSettings):
     Configuration for the LLM question extraction pipeline.
 
     All fields can be overridden via environment variables with EXTRACTION_ prefix.
-    Example: EXTRACTION_ENABLED=true, EXTRACTION_MODEL_ID=anthropic.claude-sonnet-4-5-20250929-v1:0
+    Example: EXTRACTION_MODEL_ID=anthropic.claude-sonnet-4-5-20250929-v1:0
+
+    Note: Feature toggle (enabled/require_review) is managed via AppSettings
+    and the LaunchDarkly feature flag, not in this config.
     """
 
     model_config = {"env_prefix": "EXTRACTION_"}
-
-    # --- Feature toggle ---
-    enabled: bool = Field(
-        default=False,
-        description="Master switch for LLM extraction feature"
-    )
-    require_review: bool = Field(
-        default=True,
-        description="Whether extracted questions require human review before approval"
-    )
 
     # --- Approach selection ---
     approach: Literal["auto", "pipeline"] = Field(
@@ -157,7 +150,6 @@ class AutoExtractionStrategy:
 ### Config Class
 
 - [ ] Single `ExtractionConfig` class created extending `pydantic_settings.BaseSettings`
-- [ ] Contains feature toggle fields: `enabled` (bool, default `False`), `require_review` (bool, default `True`)
 - [ ] Contains approach selection: `approach` (Literal `"auto"` | `"pipeline"`, default `"auto"`)
 - [ ] Contains model configuration fields (flattened, not nested):
   - `model_id` (str, default: Sonnet 4.5 model ID)
@@ -180,7 +172,7 @@ class AutoExtractionStrategy:
 ### Tests
 
 - [ ] Unit test: config loads with all defaults correctly
-- [ ] Unit test: environment variable overrides work (e.g., `EXTRACTION_ENABLED=true`)
+- [ ] Unit test: environment variable overrides work (e.g., `EXTRACTION_MODEL_ID=...`)
 - [ ] Unit test: invalid values are rejected (e.g., `temperature=2.0`, `approach="invalid"`)
 - [ ] Unit test: optional fields accept `None` correctly
 
@@ -196,7 +188,7 @@ class AutoExtractionStrategy:
 
 - Follow the existing pattern from `backend/app/config.py` which uses `pydantic_settings.BaseSettings` with `env_prefix`
 - The config file should be placed where the enterprise project keeps its config (e.g., `config/extraction_config.py` or alongside the existing settings)
-- The `enabled` field is a local config toggle separate from the LaunchDarkly feature flag. The LaunchDarkly flag is the primary control; this field can serve as a secondary kill switch or for local dev use
+- Feature toggle (`enabled`, `require_review`) is managed via AppSettings and the LaunchDarkly feature flag -- not part of this config class
 - When Approach 4 is needed in the future, per-step model configs will be added as additional flat fields (e.g., `step1_model_id`, `step1_temperature`) rather than nested objects, keeping the env var override pattern simple
 
 ---
