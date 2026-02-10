@@ -570,7 +570,6 @@ class QuestionOption(SwiftModel):
     question_id: str            # FK to Question
     option_text: str            # The option text (e.g., "Yes", "Manufacturing")
     option_order: int           # Display order (0-based)
-    tenant_id: str              # Tenant isolation
 ```
 
 ### QuestionDependency Model
@@ -585,7 +584,6 @@ class QuestionDependency(SwiftModel):
     depends_on_answer_value: str    # Trigger value (e.g., "Yes", "No")
     condition_type: str             # "equals", "contains", "not_empty"
     dependency_action: str          # "show" or "skip"
-    tenant_id: str
 ```
 
 ### QuestionConditionalInput Model
@@ -598,7 +596,6 @@ class QuestionConditionalInput(SwiftModel):
     question_id: str            # FK to Question
     trigger_answer_value: str   # Answer that triggers input (e.g., "Yes")
     input_prompt: str           # Prompt text (e.g., "please provide detail")
-    tenant_id: str
 ```
 
 ### Enhanced Question Model

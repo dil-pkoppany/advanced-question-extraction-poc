@@ -91,7 +91,6 @@ erDiagram
         uuid question_id FK
         string option_text
         int option_order
-        uuid tenant_id
     }
 
     QuestionDependency {
@@ -101,7 +100,6 @@ erDiagram
         string depends_on_answer_value
         string condition_type
         string dependency_action
-        uuid tenant_id
     }
 
     QuestionConditionalInput {
@@ -109,7 +107,6 @@ erDiagram
         uuid question_id FK
         string trigger_answer_value
         string input_prompt
-        uuid tenant_id
     }
 ```
 
@@ -125,7 +122,6 @@ erDiagram
   - `question_id` (UUID, FK to questions, NOT NULL)
   - `option_text` (TEXT, NOT NULL)
   - `option_order` (INT, NOT NULL)
-  - `tenant_id` (UUID, NOT NULL)
   - `created_at`, `updated_at` timestamps
 - [ ] Migration creates `question_dependencies` table with columns:
   - `dependency_id` (UUID, PK)
@@ -134,14 +130,12 @@ erDiagram
   - `depends_on_answer_value` (TEXT)
   - `condition_type` (TEXT, default `'equals'`)
   - `dependency_action` (TEXT, NOT NULL)
-  - `tenant_id` (UUID, NOT NULL)
   - `created_at`, `updated_at` timestamps
 - [ ] Migration creates `question_conditional_inputs` table with columns:
   - `conditional_id` (UUID, PK)
   - `question_id` (UUID, FK to questions, NOT NULL)
   - `trigger_answer_value` (TEXT, NOT NULL)
   - `input_prompt` (TEXT, NOT NULL)
-  - `tenant_id` (UUID, NOT NULL)
   - `created_at`, `updated_at` timestamps
 - [ ] Migration adds columns to `questions` table:
   - `help_text` (TEXT, nullable)
@@ -161,9 +155,9 @@ erDiagram
 ### Model Classes
 
 - [ ] `QuestionType` enum created with values: `open_ended`, `single_choice`, `multiple_choice`, `yes_no`, `numeric`, `integer`, `decimal`
-- [ ] `QuestionOption` model created with fields: `option_id`, `question_id`, `option_text`, `option_order`, `tenant_id`
-- [ ] `QuestionDependency` model created with fields: `dependency_id`, `question_id`, `depends_on_question_id`, `depends_on_answer_value`, `condition_type`, `dependency_action`, `tenant_id`
-- [ ] `QuestionConditionalInput` model created with fields: `conditional_id`, `question_id`, `trigger_answer_value`, `input_prompt`, `tenant_id`
+- [ ] `QuestionOption` model created with fields: `option_id`, `question_id`, `option_text`, `option_order`
+- [ ] `QuestionDependency` model created with fields: `dependency_id`, `question_id`, `depends_on_question_id`, `depends_on_answer_value`, `condition_type`, `dependency_action`
+- [ ] `QuestionConditionalInput` model created with fields: `conditional_id`, `question_id`, `trigger_answer_value`, `input_prompt`
 - [ ] `Question` model updated with new fields: `help_text`, `source_row_index`, `source_sheet_name`, `extraction_confidence`, `extraction_status`
 - [ ] `Survey` model updated with new fields: `extraction_status`, `extraction_metadata`, `extraction_run_id`, `require_extraction_review`
 - [ ] Unit tests for model creation and field validation
@@ -194,7 +188,7 @@ erDiagram
 ## Technical Notes
 
 - Follow existing project patterns for model base classes
-- All new tables require `tenant_id` for multi-tenant isolation
+- Tenant isolation is handled at the database schema level (per-tenant schema), so no `tenant_id` column is needed in any table
 - The `question_type_enum` replaces the current generic string `question_type` on the `questions` table
 - `extraction_status` on questions uses string values: `pending_review`, `approved`, `rejected`
 - `extraction_status` on surveys uses string values: `not_started`, `in_progress`, `completed`, `failed`, `partial`
