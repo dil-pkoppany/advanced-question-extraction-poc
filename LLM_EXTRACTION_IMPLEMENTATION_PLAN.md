@@ -784,25 +784,35 @@ These three items have no dependencies on each other and can be developed in par
 | Backend: Async Upload | Upload endpoint returns 202 with pending status when flag enabled; old sync flow when disabled | `TICKET_BACKEND_ASYNC_UPLOAD.md` |
 | Frontend: Async Upload | Close modal on 202, show survey in list with status, poll for updates; old flow when flag disabled | `TICKET_FRONTEND_ASYNC_UPLOAD.md` |
 
-### Phase 1: Sequential Implementation (depends on Phase 0)
+### Architecture Investigation Spike (can run in parallel with Phase 0b)
+
+> See `TICKET_ARCHITECTURE_SPIKE.md`
+
+Decide between API background task (Option A) and Lambda + SNS/SQS + Redis (Option B). This gates the Orchestrator implementation but does **not** block the architecture-agnostic extraction components below.
+
+### Phase 1a: Extraction Components -- Architecture-Agnostic (depends on Phase 0)
 
 5. **Repositories** - CRUD for new models + bulk insert methods
 6. **Checkbox Preprocessor** - Port `checkbox_label_poc.py` to production service
 7. **Shared Components** - MarkdownConverter, XmlResponseParser, QuestionPersister
 8. **Auto Extraction Strategy** - Port `approach_auto.py` using shared components
-9. **Orchestrator** - ExtractionOrchestrator with strategy selection and background task management
-10. **API Integration** - Upload flow + review endpoints + status polling endpoint
-11. **Testing** - Unit + integration tests
 
-### Phase 2: Auto-Answering (depends on Phase 1)
+### Phase 1b: Orchestration (depends on Architecture Spike + Phase 1a + Phase 0b)
+
+9. **Infrastructure** (if Lambda) - SNS topics, SQS queues, Redis cluster, Lambda functions via CDK
+10. **Orchestrator** - ExtractionOrchestrator -- API background task or Lambda fan-out depending on spike outcome
+11. **API Integration** - Status polling + review endpoints
+12. **Testing** - Unit + integration tests
+
+### Phase 2: Auto-Answering (depends on Phase 1b)
 
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for full architecture details.
 
-12. **Answering Orchestrator** - Iterate extracted questions, build prompts with dependency context, call `retrieve_and_generate` per question with `asyncio.Semaphore` throttling
-13. **Prompt Builder** - Enrich dependent question prompts with parent question text for better RAG retrieval
-14. **Pipeline Integration** - Wire answering into the background task after extraction completes (gated by `auto_answer_enabled` flag)
-15. **Status Tracking** - Use `survey.answering_status` for progress; extend polling endpoint to report answering progress
-16. **Testing** - Unit tests for prompt building, integration tests for end-to-end pipeline
+13. **Answering Orchestrator** - Iterate extracted questions, build prompts with dependency context, call `retrieve_and_generate` per question with throttling
+14. **Prompt Builder** - Enrich dependent question prompts with parent question text for better RAG retrieval
+15. **Pipeline Integration** - Wire answering into the background task or Lambda, gated by `auto_answer_enabled` flag
+16. **Status Tracking** - Use `survey.answering_status` for progress; extend polling endpoint to report answering progress
+17. **Testing** - Unit tests for prompt building, integration tests for end-to-end pipeline
 
 ---
 

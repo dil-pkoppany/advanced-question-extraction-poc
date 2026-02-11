@@ -478,6 +478,10 @@ See `backend/app/services/APPROACH_4.md` for detailed Approach 4 documentation.
 - `TICKET_BACKEND_ASYNC_UPLOAD.md` - Backend: return 202 with pending status when feature flag is enabled
 - `TICKET_FRONTEND_ASYNC_UPLOAD.md` - Frontend: close modal, show survey in list with status, poll for updates
 
+### Architecture Spike (gates Phase 1b orchestration)
+
+- `TICKET_ARCHITECTURE_SPIKE.md` - Decide: API background task vs Lambda + SNS/SQS + Redis
+
 ### Big Picture
 
 - `BIG_PICTURE.md` - Full ticket overview with dependency diagram and delivery timeline

@@ -317,7 +317,9 @@ This scenario is unrealistic due to Bedrock per-account throttling, but illustra
 
 ## Recommendation
 
-**Start with Option A (API background task)** for these reasons:
+> **Status: PENDING** -- Final decision to be made during the Architecture Investigation Spike (`TICKET_ARCHITECTURE_SPIKE.md`). Update this section with the outcome.
+
+**Initial assessment favors Option A (API background task)** for these reasons:
 
 1. **No new infrastructure** -- no Lambda, SNS, SQS, or Redis to set up and maintain
 2. **Simpler to build and debug** -- single process, standard logging, existing service patterns
@@ -326,14 +328,22 @@ This scenario is unrealistic due to Bedrock per-account throttling, but illustra
 5. **Bedrock rate limits equalize the options** -- even with Lambda, you need to throttle to ~10 concurrent calls, so the speed advantage is marginal
 6. **Migration path exists** -- the Strategy pattern and shared components make it straightforward to move processing into Lambda without changing the DB, model, or config layers
 
-**Consider migrating to Option B** when any of these triggers occur:
+**Reasons to choose Option B (Lambda) instead:**
 
 - **API server resource pressure** -- too many concurrent extractions from multiple tenants saturate server memory or CPU
-- **Failure isolation becomes critical** -- need for per-sheet automatic retry without losing other sheets' progress
+- **Failure isolation** -- need for per-sheet automatic retry (SQS) without losing other sheets' progress
 - **Multi-tenant scale** -- background tasks from many tenants compete for limited server resources
 - **Operational preference** -- the team prefers the existing survey worker Lambda pattern for consistency
 
-**What changes when migrating to Option B:**
+### What differs between the two options
+
+**If Option A is chosen:**
+
+- No infrastructure changes needed
+- Orchestrator is a Python class with `asyncio.Semaphore` throttling
+- Deployment is code-only
+
+**If Option B is chosen:**
 
 - Orchestration moves from background task to Lambda functions
 - Redis is added for temporary chunk storage
@@ -341,7 +351,7 @@ This scenario is unrealistic due to Bedrock per-account throttling, but illustra
 - `asyncio.Semaphore` throttling is replaced by SQS `maxConcurrency`
 - CDK/CloudFormation stack adds the new infrastructure
 
-**What stays the same when migrating:**
+### What stays the same regardless of decision
 
 - Database schema and model classes
 - Extraction logic (shared components, XML parsing, GUID generation)
