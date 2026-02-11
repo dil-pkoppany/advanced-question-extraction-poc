@@ -467,8 +467,17 @@ See `backend/app/services/APPROACH_4.md` for detailed Approach 4 documentation.
 - `backend/app/services/approach_auto.py` - POC Approach 1 implementation reference
 - `backend/checkbox_label_poc.py` - POC checkbox preprocessing reference
 
-### Sub-tickets (Parallelizable)
+### Sub-tickets (Phase 0 -- Parallelizable)
 
 - `TICKET_DB_MIGRATION_AND_MODELS.md` - Database migrations and model classes
 - `TICKET_FEATURE_FLAG.md` - Feature flag registration and frontend endpoint investigation
 - `TICKET_EXTRACTION_CONFIG.md` - Extraction configuration Pydantic settings class
+
+### Sub-tickets (Phase 0b -- Async Upload Flow)
+
+- `TICKET_BACKEND_ASYNC_UPLOAD.md` - Backend: return 202 with pending status when feature flag is enabled
+- `TICKET_FRONTEND_ASYNC_UPLOAD.md` - Frontend: close modal, show survey in list with status, poll for updates
+
+### Big Picture
+
+- `BIG_PICTURE.md` - Full ticket overview with dependency diagram and delivery timeline

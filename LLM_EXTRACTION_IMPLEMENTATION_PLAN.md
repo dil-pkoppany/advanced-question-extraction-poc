@@ -777,6 +777,13 @@ These three items have no dependencies on each other and can be developed in par
 | Feature Flag | LaunchDarkly flag registration and frontend endpoint investigation | `TICKET_FEATURE_FLAG.md` |
 | Extraction Configuration | Merged `ExtractionConfig` Pydantic settings class | `TICKET_EXTRACTION_CONFIG.md` |
 
+### Phase 0b: Async Upload Flow (depends on Feature Flag + DB Migration)
+
+| Ticket | Description | File |
+|--------|-------------|------|
+| Backend: Async Upload | Upload endpoint returns 202 with pending status when flag enabled; old sync flow when disabled | `TICKET_BACKEND_ASYNC_UPLOAD.md` |
+| Frontend: Async Upload | Close modal on 202, show survey in list with status, poll for updates; old flow when flag disabled | `TICKET_FRONTEND_ASYNC_UPLOAD.md` |
+
 ### Phase 1: Sequential Implementation (depends on Phase 0)
 
 5. **Repositories** - CRUD for new models + bulk insert methods
