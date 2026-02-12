@@ -10,13 +10,13 @@ See [APPROACH_1.md](backend/app/services/APPROACH_1.md) for detailed technical d
 
 ### Architecture Decision
 
-The extraction (and future auto-answering) pipeline runs as a **backend API background task** on the long-lived server process. The API returns a 202 immediately and the frontend polls for status. This approach was chosen over Lambda fan-out for simplicity, debuggability, and direct reuse of existing services. Bedrock rate limits require throttling in both approaches, reducing Lambda's speed advantage.
+> **Status: PENDING** -- The orchestration approach (API background task vs Lambda + SNS/SQS + Redis) will be decided during the Architecture Investigation Spike (`TICKET_ARCHITECTURE_SPIKE.md`). Both options are documented and compared in `ARCHITECTURE.md`. The extraction components (Repositories, Shared Components, Strategy) are architecture-agnostic and can proceed before the decision.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture documentation, including:
 - Two-phase pipeline (extraction + auto-answering)
+- Option A: API background task vs Option B: Lambda + SNS/SQS + Redis
 - Answering strategy (1 question = 1 `retrieve_and_generate` call, with dependency context)
-- Parallel processing with `asyncio.Semaphore` throttling
-- Lambda alternative (deferred)
+- Parallel processing and throttling strategies for both options
 
 ---
 
