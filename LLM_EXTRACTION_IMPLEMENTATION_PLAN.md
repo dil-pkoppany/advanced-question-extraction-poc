@@ -71,6 +71,8 @@ erDiagram
     Question ||--o{ QuestionDependency : depends_on
     Question ||--o{ QuestionConditionalInput : has_conditional
     Question ||--o{ Answer : receives
+    QuestionOption ||--o{ QuestionDependency : triggers
+    QuestionOption ||--o{ QuestionConditionalInput : triggers
     
     Survey {
         uuid survey_id PK
@@ -110,7 +112,8 @@ erDiagram
         uuid dependency_id PK
         uuid question_id FK
         uuid depends_on_question_id FK
-        string depends_on_answer_value
+        uuid depends_on_option_id FK "nullable"
+        string depends_on_answer_value "nullable"
         string condition_type
         string dependency_action
     }
@@ -118,7 +121,8 @@ erDiagram
     QuestionConditionalInput {
         uuid conditional_id PK
         uuid question_id FK
-        string trigger_answer_value
+        uuid trigger_option_id FK "nullable"
+        string trigger_answer_value "nullable"
         string input_prompt
     }
 ```
@@ -624,12 +628,13 @@ class QuestionOption(SwiftModel):
 class QuestionDependency(SwiftModel):
     """Conditional dependency between questions."""
     
-    dependency_id: str              # UUID PK
-    question_id: str                # FK - the dependent question
-    depends_on_question_id: str     # FK - the parent question (GUID)
-    depends_on_answer_value: str    # Trigger value (e.g., "Yes", "No")
-    condition_type: str             # "equals", "contains", "not_empty"
-    dependency_action: str          # "show" or "skip"
+    dependency_id: str                          # UUID PK
+    question_id: str                            # FK - the dependent question
+    depends_on_question_id: str                 # FK - the parent question (GUID)
+    depends_on_option_id: Optional[str] = None  # FK to QuestionOption - specific option that triggers this
+    depends_on_answer_value: Optional[str] = None  # Fallback text match for open-ended questions
+    condition_type: str                         # "equals", "contains", "not_empty"
+    dependency_action: str                      # "show" or "skip"
 ```
 
 ### QuestionConditionalInput Model
@@ -638,10 +643,11 @@ class QuestionDependency(SwiftModel):
 class QuestionConditionalInput(SwiftModel):
     """Additional input prompt triggered by answer selection."""
     
-    conditional_id: str         # UUID PK
-    question_id: str            # FK to Question
-    trigger_answer_value: str   # Answer that triggers input (e.g., "Yes")
-    input_prompt: str           # Prompt text (e.g., "please provide detail")
+    conditional_id: str                         # UUID PK
+    question_id: str                            # FK to Question
+    trigger_option_id: Optional[str] = None     # FK to QuestionOption - specific option that triggers this
+    trigger_answer_value: Optional[str] = None  # Fallback text match for open-ended questions
+    input_prompt: str                           # Prompt text (e.g., "please provide detail")
 ```
 
 ### Enhanced Question Model

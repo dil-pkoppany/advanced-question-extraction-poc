@@ -124,14 +124,16 @@ See `backend/app/services/APPROACH_1.md` for detailed Approach 1 pipeline docume
   - `dependency_id` (UUID, PK)
   - `question_id` (UUID, FK to questions)
   - `depends_on_question_id` (UUID, FK to questions)
-  - `depends_on_answer_value` (TEXT)
+  - `depends_on_option_id` (UUID, FK to question_options, nullable) -- specific option that triggers this dependency
+  - `depends_on_answer_value` (TEXT, nullable) -- fallback text match for open-ended questions
   - `condition_type` (TEXT, default 'equals')
   - `dependency_action` (TEXT, NOT NULL)
   - `created_at`, `updated_at` timestamps
 - [ ] Migration creates `question_conditional_inputs` table with columns:
   - `conditional_id` (UUID, PK)
   - `question_id` (UUID, FK to questions)
-  - `trigger_answer_value` (TEXT, NOT NULL)
+  - `trigger_option_id` (UUID, FK to question_options, nullable) -- specific option that triggers this input
+  - `trigger_answer_value` (TEXT, nullable) -- fallback text match for open-ended questions
   - `input_prompt` (TEXT, NOT NULL)
   - `created_at`, `updated_at` timestamps
 - [ ] Migration adds columns to `questions` table:

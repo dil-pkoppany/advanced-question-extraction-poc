@@ -63,6 +63,8 @@ erDiagram
     Question ||--o{ QuestionDependency : depends_on
     Question ||--o{ QuestionConditionalInput : has_conditional
     Question ||--o{ Answer : receives
+    QuestionOption ||--o{ QuestionDependency : triggers
+    QuestionOption ||--o{ QuestionConditionalInput : triggers
 
     Survey {
         uuid survey_id PK
@@ -102,7 +104,8 @@ erDiagram
         uuid dependency_id PK
         uuid question_id FK
         uuid depends_on_question_id FK
-        string depends_on_answer_value
+        uuid depends_on_option_id FK "nullable"
+        string depends_on_answer_value "nullable"
         string condition_type
         string dependency_action
     }
@@ -110,7 +113,8 @@ erDiagram
     QuestionConditionalInput {
         uuid conditional_id PK
         uuid question_id FK
-        string trigger_answer_value
+        uuid trigger_option_id FK "nullable"
+        string trigger_answer_value "nullable"
         string input_prompt
     }
 ```
@@ -132,16 +136,20 @@ erDiagram
   - `dependency_id` (UUID, PK)
   - `question_id` (UUID, FK to questions, NOT NULL)
   - `depends_on_question_id` (UUID, FK to questions, NOT NULL)
-  - `depends_on_answer_value` (TEXT)
+  - `depends_on_option_id` (UUID, FK to question_options, nullable) -- specific option that triggers this dependency
+  - `depends_on_answer_value` (TEXT, nullable) -- fallback text match for open-ended questions
   - `condition_type` (TEXT, default `'equals'`)
   - `dependency_action` (TEXT, NOT NULL)
   - `created_at`, `updated_at` timestamps
 - [ ] Migration creates `question_conditional_inputs` table with columns:
   - `conditional_id` (UUID, PK)
   - `question_id` (UUID, FK to questions, NOT NULL)
-  - `trigger_answer_value` (TEXT, NOT NULL)
+  - `trigger_option_id` (UUID, FK to question_options, nullable) -- specific option that triggers this input
+  - `trigger_answer_value` (TEXT, nullable) -- fallback text match for open-ended questions
   - `input_prompt` (TEXT, NOT NULL)
   - `created_at`, `updated_at` timestamps
+- [ ] CHECK constraint: at least one of `depends_on_option_id` or `depends_on_answer_value` must be non-null in `question_dependencies`
+- [ ] CHECK constraint: at least one of `trigger_option_id` or `trigger_answer_value` must be non-null in `question_conditional_inputs`
 - [ ] Migration adds columns to `questions` table:
   - `help_text` (TEXT, nullable)
   - `source_row_index` (INT, nullable)
@@ -166,8 +174,8 @@ erDiagram
 
 - [ ] `QuestionType` enum created with values: `open_ended`, `single_choice`, `multiple_choice`, `yes_no`, `numeric`, `integer`, `decimal`
 - [ ] `QuestionOption` model created with fields: `option_id`, `question_id`, `option_text`, `option_order`
-- [ ] `QuestionDependency` model created with fields: `dependency_id`, `question_id`, `depends_on_question_id`, `depends_on_answer_value`, `condition_type`, `dependency_action`
-- [ ] `QuestionConditionalInput` model created with fields: `conditional_id`, `question_id`, `trigger_answer_value`, `input_prompt`
+- [ ] `QuestionDependency` model created with fields: `dependency_id`, `question_id`, `depends_on_question_id`, `depends_on_option_id`, `depends_on_answer_value`, `condition_type`, `dependency_action`
+- [ ] `QuestionConditionalInput` model created with fields: `conditional_id`, `question_id`, `trigger_option_id`, `trigger_answer_value`, `input_prompt`
 - [ ] `Question` model updated with new fields: `help_text`, `source_row_index`, `source_sheet_name`, `extraction_confidence`, `extraction_status`
 - [ ] `Survey` model updated with new fields: `extraction_status`, `extraction_metadata`, `extraction_run_id`, `require_extraction_review`, `answering_status`, `extraction_started_at`, `answering_started_at`, `extraction_error`, `answering_error`
 - [ ] Unit tests for model creation and field validation
@@ -205,6 +213,7 @@ erDiagram
 - `answering_status` on surveys uses the same string values as `extraction_status` (added now to avoid a future migration when auto-answering is implemented)
 - `extraction_started_at` and `answering_started_at` are set when the respective phase begins; used by stale job recovery (server restart detection) and by the frontend to calculate elapsed time and enforce polling timeout
 - `extraction_error` and `answering_error` store human-readable error messages set by the top-level try/catch or timeout handler; displayed to the user in the frontend when status is `failed`
+- `depends_on_option_id` and `trigger_option_id` are nullable FKs to `question_options`. For choice-based questions (`single_choice`, `multiple_choice`, `yes_no`), these point to the specific option that triggers the dependency/conditional input. For `open_ended`/`numeric` questions (no options), the text fields (`depends_on_answer_value`, `trigger_answer_value`) are used as a fallback. This enables the auto-answering LLM to return option IDs instead of free text, making answer matching deterministic and dependency resolution precise.
 - All UUID primary keys should use `uuid_generate_v4()` as default
 
 ---

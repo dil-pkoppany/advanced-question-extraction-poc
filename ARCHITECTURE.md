@@ -386,11 +386,34 @@ Uses the existing Bedrock Knowledge Base RAG approach from `bedrock_rag_service.
 
 Each question is answered individually. For dependent/follow-up questions, the prompt is enriched with the parent question text to improve retrieval quality.
 
-#### Independent question (no dependencies)
+#### Choice-based questions (single_choice, multiple_choice, yes_no)
+
+For questions with predefined options, the prompt includes option IDs. The LLM returns the chosen ID(s) instead of free text, making answer parsing deterministic (exact ID match, no fuzzy text matching):
+
+```
+Question: What sustainability certifications do you have?
+Type: multiple_choice
+
+Options:
+- [opt-uuid-1] ISO 14001
+- [opt-uuid-2] ISO 50001
+- [opt-uuid-3] LEED
+- [opt-uuid-4] None of the above
+
+Respond with the option ID(s) that best match based on the retrieved context.
+```
+
+The LLM returns e.g. `opt-uuid-1, opt-uuid-3` -- we split on comma, match IDs to `QuestionOption` records, done. No ambiguity.
+
+This also makes dependency and conditional input resolution precise: `QuestionDependency.depends_on_option_id` and `QuestionConditionalInput.trigger_option_id` reference the exact option, so checking "was this dependency triggered?" is an ID comparison, not a text match.
+
+#### Open-ended question (no options)
 
 ```
 Question: How many employees do you have?
 ```
+
+For open-ended questions, the LLM returns free text as before. Dependencies on open-ended answers fall back to `depends_on_answer_value` text matching.
 
 #### Follow-up question (has parent dependency)
 
